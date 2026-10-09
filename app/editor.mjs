@@ -143,7 +143,8 @@ try {
     schedule();
   });
   window.addEventListener('beforeunload', event => {
-    if (window.editorReady && (saveFailure || changeRevision !== savedRevision || (protectedDocument && documentChanged))) {
+    const journalPending = journalStarted && recovery.read(Number.MAX_SAFE_INTEGER).revision !== savedRevision;
+    if (window.editorReady && (saveFailure || journalPending || changeRevision !== savedRevision || (protectedDocument && documentChanged))) {
       event.preventDefault(); event.returnValue = '';
     }
   });

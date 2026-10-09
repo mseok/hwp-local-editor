@@ -1,5 +1,5 @@
 diff --git a/rhwp-studio/src/core/wasm-bridge.ts b/rhwp-studio/src/core/wasm-bridge.ts
-index 58162bab6..a8114ff4d 100644
+index 58162bab6..573a1ea70 100644
 --- a/rhwp-studio/src/core/wasm-bridge.ts
 +++ b/rhwp-studio/src/core/wasm-bridge.ts
 @@ -10,6 +10,7 @@ import type { HyperlinkTarget, HyperlinkContext } from './hyperlink';
@@ -183,7 +183,46 @@ index 58162bab6..a8114ff4d 100644
    mergeTableCells(sec: number, parentPara: number, controlIdx: number, startRow: number, startCol: number, endRow: number, endCol: number): { ok: boolean; cellCount: number } {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      return JSON.parse(this.doc.mergeTableCells(sec, parentPara, controlIdx, startRow, startCol, endRow, endCol));
-@@ -2182,6 +2267,36 @@ export class WasmBridge {
+@@ -2156,6 +2241,26 @@ export class WasmBridge {
+     return JSON.parse((this.doc as any).transposeTableCellsInPlace(sec, parentPara, controlIdx));
+   }
+ 
++  copyTableCellsTransposedByPath(
++    sec: number, parentPara: number, cellPath: string,
++    startRow: number, startCol: number, endRow: number, endCol: number,
++  ): TableTransposeResult {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse(this.doc.copyTableCellsTransposedByPath(sec, parentPara, cellPath, startRow, startCol, endRow, endCol));
++  }
++
++  pasteTableCellsTransposedByPath(
++    sec: number, parentPara: number, cellPath: string, startRow: number, startCol: number,
++  ): TableTransposeResult {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse(this.doc.pasteTableCellsTransposedByPath(sec, parentPara, cellPath, startRow, startCol));
++  }
++
++  transposeTableCellsInPlaceByPath(sec: number, parentPara: number, cellPath: string): TableTransposeResult {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse(this.doc.transposeTableCellsInPlaceByPath(sec, parentPara, cellPath));
++  }
++
+   pasteTableCellsTransposedAsTable(
+     sec: number,
+     para: number,
+@@ -2170,6 +2275,11 @@ export class WasmBridge {
+     return Boolean((this.doc as any).hasTableTransposeClipboard?.());
+   }
+ 
++  getTableTransposeClipboardInfo(): TableTransposeResult | null {
++    if (!this.doc) return null;
++    return JSON.parse(this.doc.getTableTransposeClipboardInfo());
++  }
++
+   /** 표를 지정 행에서 두 개로 나눈다 (한컴 [표-표 나누기]). */
+   splitTable(sec: number, parentPara: number, controlIdx: number, atRow: number): { ok: boolean; frontRows: number; backParaIdx: number } {
+     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
+@@ -2182,6 +2292,36 @@ export class WasmBridge {
      return JSON.parse(this.doc.mergeTableWithNext(sec, parentPara, controlIdx));
    }
  
@@ -220,7 +259,7 @@ index 58162bab6..a8114ff4d 100644
    insertTableRow(sec: number, parentPara: number, controlIdx: number, rowIdx: number, below: boolean): { ok: boolean; rowCount: number; colCount: number } {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      return JSON.parse(this.doc.insertTableRow(sec, parentPara, controlIdx, rowIdx, below));
-@@ -3782,9 +3897,9 @@ export class WasmBridge {
+@@ -3782,9 +3922,9 @@ export class WasmBridge {
     * cellContext 가 실리므로 호출자는 셀 좌표로 커서를 옮길 수 있어야 한다.
     * 기본값은 종전대로 본문만 — 셀 이동을 못 하는 호출자가 무회귀로 남는다.
     */
@@ -871,7 +910,7 @@ index cf7344f..4feb64d 100644
      }
  }
 diff --git a/src/model/table.rs b/src/model/table.rs
-index 406dd1b25..ab68041a9 100644
+index 406dd1b25..7ccab02a8 100644
 --- a/src/model/table.rs
 +++ b/src/model/table.rs
 @@ -305,6 +305,31 @@ impl Cell {
@@ -906,7 +945,19 @@ index 406dd1b25..ab68041a9 100644
          if table.row_count == 1
              && table.col_count == 1
              && table.cells.len() == 1
-@@ -1237,6 +1262,40 @@ impl Table {
+@@ -1103,7 +1128,10 @@ impl Table {
+         self.col_count = target_cols;
+         self.row_sizes = vec![target_cols as i16; target_rows as usize];
+         self.cells = cells;
+-        self.zones.clear();
++        for zone in &mut self.zones {
++            std::mem::swap(&mut zone.start_row, &mut zone.start_col);
++            std::mem::swap(&mut zone.end_row, &mut zone.end_col);
++        }
+         self.update_ctrl_dimensions();
+         self.rebuild_grid();
+ 
+@@ -1237,6 +1265,40 @@ impl Table {
          self.get_column_widths()
      }
  
@@ -947,7 +998,7 @@ index 406dd1b25..ab68041a9 100644
      /// 열별 폭(HWPUNIT)을 절대값으로 설정한다.
      ///
      /// `widths.len()` 은 `col_count` 와 같아야 한다. 병합 셀(`col_span > 1`)은
-@@ -1335,7 +1394,7 @@ impl Table {
+@@ -1335,7 +1397,7 @@ impl Table {
              .stretched_row_heights()
              .and_then(|heights| heights.get(row_idx as usize).copied());
          let original_height = self.common.height;
@@ -6979,7 +7030,7 @@ index 2f0b5ae..0fb0243 100644
          w,
          "hh:breakSetting",
 diff --git a/src/wasm_api.rs b/src/wasm_api.rs
-index 2031085e3..bab55cf06 100644
+index 2031085e3..346359f42 100644
 --- a/src/wasm_api.rs
 +++ b/src/wasm_api.rs
 @@ -189,6 +189,11 @@ fn render_page_to_canvas_filtered_with_profile_impl(
@@ -7300,7 +7351,61 @@ index 2031085e3..bab55cf06 100644
      /// 표의 셀을 병합한다.
      ///
      /// 반환값: JSON `{"ok":true,"cellCount":<N>}`
-@@ -3382,6 +3613,21 @@ impl HwpDocument {
+@@ -2430,6 +2661,41 @@ impl HwpDocument {
+         .map_err(|e| e.into())
+     }
+ 
++    #[wasm_bindgen(js_name = copyTableCellsTransposedByPath)]
++    pub fn copy_table_cells_transposed_by_path(
++        &mut self, section_idx: u32, parent_para_idx: u32, cell_path_json: &str,
++        start_row: u32, start_col: u32, end_row: u32, end_col: u32,
++    ) -> Result<String, JsValue> {
++        let path = parse_cell_path_arg(cell_path_json)?;
++        self.copy_table_cells_transposed_by_cell_path_native(
++            section_idx as usize, parent_para_idx as usize, &path,
++            row_index_from_u32(start_row)?, row_index_from_u32(start_col)?,
++            row_index_from_u32(end_row)?, row_index_from_u32(end_col)?,
++        ).map_err(JsValue::from)
++    }
++
++    #[wasm_bindgen(js_name = pasteTableCellsTransposedByPath)]
++    pub fn paste_table_cells_transposed_by_path(
++        &mut self, section_idx: u32, parent_para_idx: u32, cell_path_json: &str,
++        start_row: u32, start_col: u32,
++    ) -> Result<String, JsValue> {
++        let path = parse_cell_path_arg(cell_path_json)?;
++        self.paste_table_cells_transposed_by_cell_path_native(
++            section_idx as usize, parent_para_idx as usize, &path,
++            row_index_from_u32(start_row)?, row_index_from_u32(start_col)?,
++        ).map_err(JsValue::from)
++    }
++
++    #[wasm_bindgen(js_name = transposeTableCellsInPlaceByPath)]
++    pub fn transpose_table_cells_in_place_by_path(
++        &mut self, section_idx: u32, parent_para_idx: u32, cell_path_json: &str,
++    ) -> Result<String, JsValue> {
++        let path = parse_cell_path_arg(cell_path_json)?;
++        self.transpose_table_cells_in_place_by_cell_path_native(
++            section_idx as usize, parent_para_idx as usize, &path,
++        ).map_err(JsValue::from)
++    }
++
+     /// 행/열 바꿈 복사 버퍼를 커서 위치에 새 표로 생성해 붙여넣는다.
+     ///
+     /// 반환값: JSON `{"ok":true,"paraIdx":N,"controlIdx":N,"sourceRows":N,"sourceCols":N,"targetRows":N,"targetCols":N}`
+@@ -2454,6 +2720,11 @@ impl HwpDocument {
+         self.has_table_transpose_clipboard_native()
+     }
+ 
++    #[wasm_bindgen(js_name = getTableTransposeClipboardInfo)]
++    pub fn get_table_transpose_clipboard_info(&self) -> String {
++        self.get_table_transpose_clipboard_info_native()
++    }
++
+     /// 캐럿 위치에서 문단을 분할한다 (Enter 키).
+     ///
+     /// char_offset 이후의 텍스트가 새 문단으로 이동한다.
+@@ -3382,6 +3653,21 @@ impl HwpDocument {
      /// 반환: JSON `{"ok":true,"changes":[{cellIdx,beforeId,afterId}...],
      /// "borderFillLenBefore":N,"docInfoDirtyBefore":bool}` — changes 는 [#5959]
      /// borderFillId 전환 기록(target+이웃)이다.
@@ -7322,7 +7427,7 @@ index 2031085e3..bab55cf06 100644
      #[wasm_bindgen(js_name = setCellProperties)]
      pub fn set_cell_properties(
          &mut self,
-@@ -3530,9 +3776,34 @@ impl HwpDocument {
+@@ -3530,9 +3816,34 @@ impl HwpDocument {
          .map_err(|e| e.into())
      }
  
@@ -7359,7 +7464,7 @@ index 2031085e3..bab55cf06 100644
      #[wasm_bindgen(js_name = getTableProperties)]
      pub fn get_table_properties(
          &self,
-@@ -3551,6 +3822,20 @@ impl HwpDocument {
+@@ -3551,6 +3862,20 @@ impl HwpDocument {
      /// 표 속성을 수정한다.
      ///
      /// 반환: JSON `{"ok":true}`
@@ -7380,7 +7485,7 @@ index 2031085e3..bab55cf06 100644
      #[wasm_bindgen(js_name = setTableProperties)]
      pub fn set_table_properties(
          &mut self,
-@@ -5498,9 +5783,11 @@ impl HwpDocument {
+@@ -5498,9 +5823,11 @@ impl HwpDocument {
          forward: bool,
          case_sensitive: bool,
          include_cells: Option<bool>,
@@ -7393,7 +7498,7 @@ index 2031085e3..bab55cf06 100644
                  query,
                  from_sec as usize,
                  from_para as usize,
-@@ -5509,6 +5796,7 @@ impl HwpDocument {
+@@ -5509,6 +5836,7 @@ impl HwpDocument {
                  case_sensitive,
                  // [#3865] 미지정이면 종전 동작(본문만) — 인자를 6개만 넘기던 기존 호출자 무회귀.
                  include_cells.unwrap_or(false),
@@ -7414,7 +7519,7 @@ index a00248c..c98733e 100644
      "CanvasPattern",
      "HtmlCanvasElement",
 diff --git a/rhwp-studio/src/ui/find-dialog.ts b/rhwp-studio/src/ui/find-dialog.ts
-index 6407dd3bb..da7e3717f 100644
+index 6407dd3bb..f10ac0627 100644
 --- a/rhwp-studio/src/ui/find-dialog.ts
 +++ b/rhwp-studio/src/ui/find-dialog.ts
 @@ -1,5 +1,5 @@
@@ -7424,9 +7529,11 @@ index 6407dd3bb..da7e3717f 100644
  
  import { t } from '../i18n/index.ts';
  export type FindMode = 'find' | 'replace';
-@@ -16,16 +16,18 @@ export type FindMode = 'find' | 'replace';
+@@ -15,17 +15,20 @@ export type FindMode = 'find' | 'replace';
+  */
  export function navigateToSearchHit(ih: ReturnType<CommandServices['getInputHandler']>, hit: SearchResult): void {
    if (!ih || !hit.found) return;
++  if (ih.isInCellSelectionMode()) ih.exitCellSelectionMode();
  
 -  const cell = hit.cellContext;
 -  const startPos = cell
@@ -7450,7 +7557,7 @@ index 6407dd3bb..da7e3717f 100644
        }
      : {
          sectionIndex: hit.sec!,
-@@ -36,7 +38,7 @@ export function navigateToSearchHit(ih: ReturnType<CommandServices['getInputHand
+@@ -36,7 +39,7 @@ export function navigateToSearchHit(ih: ReturnType<CommandServices['getInputHand
  
    // 선택 영역으로 하이라이트: anchor → start, cursor → end
    const cursor = (ih as any).cursor;
@@ -7459,7 +7566,7 @@ index 6407dd3bb..da7e3717f 100644
      // moveCursorTo 의 사전 검증은 본문 좌표만 본다(getCursorRect). 셀 위치를 넘기면
      // 바깥 문단을 검사해 엉뚱하게 거절될 수 있으므로, 셀 매치는 커서를 직접 옮긴다 —
      // rhwpDev.goto 가 이미 쓰는 경로다.
-@@ -53,6 +55,12 @@ export function navigateToSearchHit(ih: ReturnType<CommandServices['getInputHand
+@@ -53,6 +56,12 @@ export function navigateToSearchHit(ih: ReturnType<CommandServices['getInputHand
    (ih as any).updateCaret?.();
  }
  
@@ -7472,7 +7579,7 @@ index 6407dd3bb..da7e3717f 100644
  /**
   * 찾기/찾아바꾸기 모달리스 대화상자
   *
-@@ -60,6 +68,7 @@ export function navigateToSearchHit(ih: ReturnType<CommandServices['getInputHand
+@@ -60,6 +69,7 @@ export function navigateToSearchHit(ih: ReturnType<CommandServices['getInputHand
   */
  export class FindDialog {
    static lastQuery = '';
@@ -7480,7 +7587,7 @@ index 6407dd3bb..da7e3717f 100644
    static lastCaseSensitive = false;
  
    private _open = false;
-@@ -100,6 +109,7 @@ export class FindDialog {
+@@ -100,6 +110,7 @@ export class FindDialog {
      this.build();
      document.body.appendChild(this.wrap);
      this.queryInput.value = FindDialog.lastQuery;
@@ -7488,7 +7595,7 @@ index 6407dd3bb..da7e3717f 100644
      this.caseSensitiveCheck.checked = FindDialog.lastCaseSensitive;
      this.applyMode();
      this.installKeyCaptureHandler();
-@@ -120,6 +130,7 @@ export class FindDialog {
+@@ -120,6 +131,7 @@ export class FindDialog {
    }
  
    hide(): void {
@@ -7496,7 +7603,7 @@ index 6407dd3bb..da7e3717f 100644
      this._open = false;
      this.queryComposing = false;
      this.pendingSearchDirection = null;
-@@ -393,13 +404,15 @@ export class FindDialog {
+@@ -393,13 +405,15 @@ export class FindDialog {
      // 역방향 검색 시: 현재 선택 영역의 시작 위치를 기준으로 해야
      // 현재 매치를 건너뛰고 이전 매치를 찾을 수 있다.
      let fromSec = pos.sectionIndex;
@@ -7513,7 +7620,7 @@ index 6407dd3bb..da7e3717f 100644
      }
  
      const hadHit = Boolean(this.currentHit?.found);
-@@ -413,6 +426,7 @@ export class FindDialog {
+@@ -413,6 +427,7 @@ export class FindDialog {
        // [#3865] 표 셀 안 텍스트도 찾는다. 아래 navigateToHit 이 cellContext 를 셀 좌표로
        // 옮길 수 있으므로 켤 수 있다 — 못 옮기면 "찾았다는데 화면은 안 움직임"이 된다.
        true,
@@ -7521,7 +7628,7 @@ index 6407dd3bb..da7e3717f 100644
      );
  
      if (result.found) {
-@@ -483,6 +497,19 @@ export class FindDialog {
+@@ -483,6 +498,19 @@ export class FindDialog {
      // 엉뚱한 곳이 손상된다. 찾기가 셀 매치를 반환하기 시작했으니 여기도 함께 갈라야 한다.
      const cell = hit.cellContext;
      const applyReplace = (wasm: typeof this.services.wasm): ReplaceResult => {
@@ -7541,7 +7648,7 @@ index 6407dd3bb..da7e3717f 100644
        if (cell) {
          const r = wasm.replaceTextInCellDeferredPagination(
            hit.sec!, cell.parentPara, cell.ctrlIdx, cell.cellIdx, cell.cellPara,
-@@ -500,7 +527,7 @@ export class FindDialog {
+@@ -500,7 +528,7 @@ export class FindDialog {
      if (ih) {
        ih.executeOperation({ kind: 'snapshot', operationType: 'replaceText', operation: (wasm) => {
          result = applyReplace(wasm);
@@ -7563,7 +7670,7 @@ index dffc08cd0..7e8bd19b5 100644
      this.countInput.min = '1';
      this.countInput.max = String(MAX_INSERT_COUNT);
 diff --git a/rhwp-studio/src/command/commands/table.ts b/rhwp-studio/src/command/commands/table.ts
-index c6de9bdb5..bd5c15c98 100644
+index c6de9bdb5..150304835 100644
 --- a/rhwp-studio/src/command/commands/table.ts
 +++ b/rhwp-studio/src/command/commands/table.ts
 @@ -1,4 +1,5 @@
@@ -7580,7 +7687,19 @@ index c6de9bdb5..bd5c15c98 100644
  };
  
  function safeTableOp(fn: () => void, label: string): void {
-@@ -211,13 +213,11 @@ function currentTableCellContext(services: CommandServices): TableCellCommandCon
+@@ -102,11 +104,6 @@ function hasNonRectangularCellSelection(ih: ReturnType<CommandServices['getInput
+   return Boolean(ih?.isInCellSelectionMode?.() && ih.hasExcludedCellSelection?.());
+ }
+ 
+-function isTransposeTargetOverflowError(err: unknown): boolean {
+-  const message = err instanceof Error ? err.message : String(err);
+-  return message.includes('표 크기') && message.includes('초과');
+-}
+-
+ function isCellInRange(cell: { row: number; col: number }, range: CellRange): boolean {
+   return cell.row >= range.startRow && cell.row <= range.endRow &&
+     cell.col >= range.startCol && cell.col <= range.endCol;
+@@ -211,13 +208,11 @@ function currentTableCellContext(services: CommandServices): TableCellCommandCon
    if (!ih) return null;
    const pos = ih.getCursorPosition();
    if (pos.parentParaIndex === undefined || pos.controlIndex === undefined || pos.cellIndex === undefined) return null;
@@ -7599,7 +7718,7 @@ index c6de9bdb5..bd5c15c98 100644
  }
  
  function restoreEditorFocus(ih: TableCellCommandContext['ih']): void {
-@@ -225,6 +225,31 @@ function restoreEditorFocus(ih: TableCellCommandContext['ih']): void {
+@@ -225,6 +220,31 @@ function restoreEditorFocus(ih: TableCellCommandContext['ih']): void {
    textarea?.focus();
  }
  
@@ -7631,7 +7750,7 @@ index c6de9bdb5..bd5c15c98 100644
  function applyTableInsertRowColumn(
    services: CommandServices,
    mode: TableInsertRowColumnMode,
-@@ -232,88 +257,45 @@ function applyTableInsertRowColumn(
+@@ -232,88 +252,45 @@ function applyTableInsertRowColumn(
  ): void {
    const ctx = currentTableCellContext(services);
    if (!ctx) return;
@@ -7738,7 +7857,7 @@ index c6de9bdb5..bd5c15c98 100644
      },
    }), '줄/칸 지우기');
    restoreEditorFocus(ih);
-@@ -378,7 +360,7 @@ export const tableCommands: CommandDef[] = [
+@@ -378,7 +355,7 @@ export const tableCommands: CommandDef[] = [
        if (ih.isInTableObjectSelection()) {
          const ref = ih.getSelectedTableRef();
          if (!ref) return;
@@ -7747,7 +7866,7 @@ index c6de9bdb5..bd5c15c98 100644
          const dialog = new TableCellPropsDialog(services.wasm, services.eventBus, tableCtx, 0, 'table', services);
          dialog.show();
          return;
-@@ -386,8 +368,8 @@ export const tableCommands: CommandDef[] = [
+@@ -386,8 +363,8 @@ export const tableCommands: CommandDef[] = [
  
        const pos = ih.getCursorPosition();
        if (pos.parentParaIndex === undefined || pos.controlIndex === undefined || pos.cellIndex === undefined) return;
@@ -7758,7 +7877,7 @@ index c6de9bdb5..bd5c15c98 100644
        dialog.show();
      },
    },
-@@ -474,19 +456,7 @@ export const tableCommands: CommandDef[] = [
+@@ -474,19 +451,7 @@ export const tableCommands: CommandDef[] = [
      label: t('command.table.insertRowAbove.registryLabel'),
      canExecute: inTable,
      execute(services) {
@@ -7779,7 +7898,7 @@ index c6de9bdb5..bd5c15c98 100644
      },
    },
    {
-@@ -494,19 +464,7 @@ export const tableCommands: CommandDef[] = [
+@@ -494,19 +459,7 @@ export const tableCommands: CommandDef[] = [
      label: t('command.table.insertRowBelow.registryLabel'),
      canExecute: inTable,
      execute(services) {
@@ -7800,7 +7919,7 @@ index c6de9bdb5..bd5c15c98 100644
      },
    },
    {
-@@ -514,19 +472,7 @@ export const tableCommands: CommandDef[] = [
+@@ -514,19 +467,7 @@ export const tableCommands: CommandDef[] = [
      label: t('command.table.insertColLeft.registryLabel'),
      canExecute: inTable,
      execute(services) {
@@ -7821,7 +7940,7 @@ index c6de9bdb5..bd5c15c98 100644
      },
    },
    {
-@@ -534,19 +480,7 @@ export const tableCommands: CommandDef[] = [
+@@ -534,19 +475,7 @@ export const tableCommands: CommandDef[] = [
      label: t('command.table.insertColRight.registryLabel'),
      canExecute: inTable,
      execute(services) {
@@ -7842,7 +7961,7 @@ index c6de9bdb5..bd5c15c98 100644
      },
    },
    {
-@@ -554,19 +488,7 @@ export const tableCommands: CommandDef[] = [
+@@ -554,19 +483,7 @@ export const tableCommands: CommandDef[] = [
      label: t('command.table.deleteRow.registryLabel'),
      canExecute: inTable,
      execute(services) {
@@ -7863,7 +7982,7 @@ index c6de9bdb5..bd5c15c98 100644
      },
    },
    {
-@@ -574,19 +496,7 @@ export const tableCommands: CommandDef[] = [
+@@ -574,19 +491,7 @@ export const tableCommands: CommandDef[] = [
      label: t('command.table.deleteCol.registryLabel'),
      canExecute: inTable,
      execute(services) {
@@ -7884,7 +8003,7 @@ index c6de9bdb5..bd5c15c98 100644
      },
    },
    {
-@@ -596,18 +506,26 @@ export const tableCommands: CommandDef[] = [
+@@ -596,18 +501,26 @@ export const tableCommands: CommandDef[] = [
      shortcutLabel: 'S',
      canExecute: inTable,
      execute(services) {
@@ -7918,7 +8037,7 @@ index c6de9bdb5..bd5c15c98 100644
        const isMerged = !isMultiCell && (cellInfo.rowSpan > 1 || cellInfo.colSpan > 1);
  
        const dialog = new CellSplitDialog(isMerged);
-@@ -618,25 +536,30 @@ export const tableCommands: CommandDef[] = [
+@@ -618,25 +531,30 @@ export const tableCommands: CommandDef[] = [
            kind: 'snapshot',
            operationType: 'splitTableCell',
            operation: (wasm) => {
@@ -7955,7 +8074,7 @@ index c6de9bdb5..bd5c15c98 100644
        };
        dialog.show();
      },
-@@ -647,8 +570,10 @@ export const tableCommands: CommandDef[] = [
+@@ -647,8 +565,10 @@ export const tableCommands: CommandDef[] = [
      shortcutLabel: 'M',
      canExecute: (ctx) => ctx.inCellSelectionMode,
      execute(services) {
@@ -7968,7 +8087,7 @@ index c6de9bdb5..bd5c15c98 100644
        const range = ih.getSelectedCellRange();
        const tableCtx = ih.getCellTableContext();
        if (!range || !tableCtx) return;
-@@ -657,11 +582,14 @@ export const tableCommands: CommandDef[] = [
+@@ -657,11 +577,14 @@ export const tableCommands: CommandDef[] = [
          kind: 'snapshot',
          operationType: 'mergeTableCells',
          operation: (wasm) => {
@@ -7985,7 +8104,146 @@ index c6de9bdb5..bd5c15c98 100644
      },
    },
    {
-@@ -818,44 +746,33 @@ export const tableCommands: CommandDef[] = [
+@@ -675,13 +598,13 @@ export const tableCommands: CommandDef[] = [
+       const tableCtx = ih.getCellTableContext?.();
+       if (!range || !tableCtx) return;
+       if (hasNonRectangularCellSelection(ih)) return;
+-      if (tableCtx.cellPath && tableCtx.cellPath.length > 1) return;
++      const path = tableCtx.cellPath?.length ? tableCtx.cellPath : [{ controlIndex: tableCtx.ci, cellIndex: 0, cellParaIndex: 0 }];
+ 
+       safeTableOp(() => {
+-        services.wasm.copyTableCellsTransposed(
++        services.wasm.copyTableCellsTransposedByPath(
+           tableCtx.sec,
+           tableCtx.ppi,
+-          tableCtx.ci,
++          JSON.stringify(path),
+           range.startRow,
+           range.startCol,
+           range.endRow,
+@@ -699,12 +622,16 @@ export const tableCommands: CommandDef[] = [
+       const ih = services.getInputHandler();
+       if (!ih) return;
+       const pos = ih.getCursorPosition();
+-      if ((pos.cellPath?.length ?? 0) > 1) return;
++      ih.clearTextSelection();
+ 
+       safeTableOp(() => ih.executeOperation({
+         kind: 'snapshot',
+         operationType: 'pasteTableCellsTransposed',
+         operation: (wasm) => {
++          const clipboard = wasm.getTableTransposeClipboardInfo();
++          if (!clipboard) throw new Error('행/열 바꿈 복사 데이터가 없습니다.');
++          const fits = (dims: TableDimensions, row: number, col: number) =>
++            row + clipboard.targetRows! <= dims.rowCount && col + clipboard.targetCols! <= dims.colCount;
+           const pasteAsNewTable = (sectionIndex: number, paragraphIndex: number, charOffset: number) => {
+             const result = wasm.pasteTableCellsTransposedAsTable(
+               sectionIndex,
+@@ -727,12 +654,12 @@ export const tableCommands: CommandDef[] = [
+ 
+           const selectionTableCtx = ih.isInCellSelectionMode?.() ? ih.getCellTableContext?.() : null;
+           if (selectionTableCtx) {
+-            if ((selectionTableCtx.cellPath?.length ?? 0) > 1) return pos;
++            const path = selectionTableCtx.cellPath?.length ? selectionTableCtx.cellPath : [{ controlIndex: selectionTableCtx.ci, cellIndex: 0, cellParaIndex: 0 }];
+             const range = ih.getSelectedCellRange?.();
+-            const dims = wasm.getTableDimensions(
++            const dims = wasm.getTableDimensionsByPath(
+               selectionTableCtx.sec,
+               selectionTableCtx.ppi,
+-              selectionTableCtx.ci,
++              JSON.stringify(path),
+             );
+             const isWholeTable = range
+               && range.startRow === 0
+@@ -740,71 +667,47 @@ export const tableCommands: CommandDef[] = [
+               && range.endRow === dims.rowCount - 1
+               && range.endCol === dims.colCount - 1;
+             if (isWholeTable) {
+-              wasm.transposeTableCellsInPlace(
++              wasm.transposeTableCellsInPlaceByPath(
+                 selectionTableCtx.sec,
+                 selectionTableCtx.ppi,
+-                selectionTableCtx.ci,
++                JSON.stringify(path),
+               );
+-              return {
+-                sectionIndex: selectionTableCtx.sec,
+-                paragraphIndex: 0,
+-                charOffset: 0,
+-                parentParaIndex: selectionTableCtx.ppi,
+-                controlIndex: selectionTableCtx.ci,
+-                cellIndex: 0,
+-                cellParaIndex: 0,
+-              };
++              return positionAfterTableEdit(wasm, pos, path, 0, 0);
+             }
+-            if (range) {
+-              try {
+-                wasm.pasteTableCellsTransposed(
++            if (range && fits(dims, range.startRow, range.startCol)) {
++                wasm.pasteTableCellsTransposedByPath(
+                   selectionTableCtx.sec,
+                   selectionTableCtx.ppi,
+-                  selectionTableCtx.ci,
++                  JSON.stringify(path),
+                   range.startRow,
+                   range.startCol,
+                 );
+-                return {
+-                  sectionIndex: selectionTableCtx.sec,
+-                  paragraphIndex: 0,
+-                  charOffset: 0,
+-                  parentParaIndex: selectionTableCtx.ppi,
+-                  controlIndex: selectionTableCtx.ci,
+-                  cellIndex: 0,
+-                  cellParaIndex: 0,
+-                };
+-              } catch (err) {
+-                if (!isTransposeTargetOverflowError(err)) throw err;
+-              }
++                return positionAfterTableEdit(wasm, pos, path, range.startRow, range.startCol);
+             }
+             return pasteAsNewTable(selectionTableCtx.sec, selectionTableCtx.ppi, 0);
+           }
+ 
+           if (pos.parentParaIndex !== undefined && pos.controlIndex !== undefined && pos.cellIndex !== undefined) {
+-            const cellInfo = services.wasm.getCellInfo(
+-              pos.sectionIndex,
+-              pos.parentParaIndex,
+-              pos.controlIndex,
+-              pos.cellIndex,
+-            );
+-            try {
+-              wasm.pasteTableCellsTransposed(
++            const path = pos.cellPath?.length ? pos.cellPath : [{ controlIndex: pos.controlIndex, cellIndex: pos.cellIndex, cellParaIndex: pos.cellParaIndex ?? 0 }];
++            const cellInfo = wasm.getCellInfoByPath(pos.sectionIndex, pos.parentParaIndex, JSON.stringify(path));
++            const dims = wasm.getTableDimensionsByPath(pos.sectionIndex, pos.parentParaIndex, JSON.stringify(path));
++            if (fits(dims, cellInfo.row, cellInfo.col)) {
++              wasm.pasteTableCellsTransposedByPath(
+                 pos.sectionIndex,
+                 pos.parentParaIndex,
+-                pos.controlIndex,
++                JSON.stringify(path),
+                 cellInfo.row,
+                 cellInfo.col,
+               );
+-            } catch (err) {
+-              if (!isTransposeTargetOverflowError(err)) throw err;
+-              return pasteAsNewTable(pos.sectionIndex, pos.parentParaIndex, 0);
++              return positionAfterTableEdit(wasm, pos, path, cellInfo.row, cellInfo.col);
+             }
+-            return pos;
++            return pasteAsNewTable(pos.sectionIndex, pos.parentParaIndex, 0);
+           }
+ 
+           return pasteAsNewTable(pos.sectionIndex, pos.paragraphIndex, pos.charOffset);
+         },
+       }), '행/열 바꿈 붙여넣기');
++      ih.exitCellSelectionMode();
+       restoreEditorFocus(ih);
+     },
+   },
+@@ -818,44 +721,33 @@ export const tableCommands: CommandDef[] = [
        if (!ih) return;
        const pos = ih.getCursorPosition();
        if (pos?.parentParaIndex === undefined || pos.controlIndex === undefined || pos.cellIndex === undefined) return;
@@ -8046,7 +8304,7 @@ index c6de9bdb5..bd5c15c98 100644
      id: 'table:attach',
      label: t('command.table.attach.registryLabel'),
      shortcutLabel: 'Ctrl+M,Z',
-@@ -863,27 +780,22 @@ export const tableCommands: CommandDef[] = [
+@@ -863,27 +755,22 @@ export const tableCommands: CommandDef[] = [
      execute(services) {
        const ih = services.getInputHandler();
        if (!ih) return;
@@ -8084,7 +8342,7 @@ index c6de9bdb5..bd5c15c98 100644
            },
          });
        }, '표 붙이기');
-@@ -896,28 +808,7 @@ export const tableCommands: CommandDef[] = [
+@@ -896,28 +783,7 @@ export const tableCommands: CommandDef[] = [
      execute(services) {
        const ih = services.getInputHandler();
        if (!ih) return;
@@ -8641,7 +8899,7 @@ index 609d0525d..2fff61ba4 100644
          // 이동 규칙도 대화상자와 공유한다(셀 매치는 셀 좌표로 간다).
          navigateToSearchHit(ih, result);
 diff --git a/src/document_core/commands/table_ops.rs b/src/document_core/commands/table_ops.rs
-index 7c31daa4c..eae4fd004 100644
+index 7c31daa4c..45bd0e60c 100644
 --- a/src/document_core/commands/table_ops.rs
 +++ b/src/document_core/commands/table_ops.rs
 @@ -42,6 +42,395 @@ struct CellResizeUpdate {
@@ -9502,12 +9760,10 @@ index 7c31daa4c..eae4fd004 100644
          if inherit_text_reflow {
              self.mark_table_text_reflowed_after_edit(section_idx, parent_para_idx + 2, 0)?;
          }
-@@ -414,133 +799,21 @@ impl DocumentCore {
-         &mut self,
-         section_idx: usize,
+@@ -416,166 +801,276 @@ impl DocumentCore {
          parent_para_idx: usize,
--        control_idx: usize,
--    ) -> Result<String, HwpError> {
+         control_idx: usize,
+     ) -> Result<String, HwpError> {
 -        use crate::model::control::Control;
 -
 -        // 1) 다음 표 위치 탐색 — 사이에는 빈 문단만 허용.
@@ -9571,10 +9827,15 @@ index 7c31daa4c..eae4fd004 100644
 -            }
 -            found.ok_or_else(|| HwpError::RenderError("붙일 다음 표가 없습니다".to_string()))?
 -        };
--        let merged_text_reflow =
--            self.table_text_reflowed_path_exists(section_idx, parent_para_idx, control_idx)
--                || self.table_text_reflowed_path_exists(section_idx, back_para_idx, back_ctrl_idx);
--
++        let (back_para_idx, back_ctrl_idx, _, _) = find_next_table(
++            &self.document.sections.get(section_idx)
++                .ok_or_else(|| HwpError::RenderError("구역 인덱스 범위 초과".to_string()))?.paragraphs,
++            parent_para_idx,
++        )?;
+         let merged_text_reflow =
+             self.table_text_reflowed_path_exists(section_idx, parent_para_idx, control_idx)
+                 || self.table_text_reflowed_path_exists(section_idx, back_para_idx, back_ctrl_idx);
+ 
 -        // 2) 남은 검증을 문서 변형 전에 끝낸다 — 여기서 실패하면 문서는 그대로다.
 -        //    (뒤 표를 먼저 remove 하면 실패 경로에서 뒤 표가 소실된다.)
 -        let front_rows = self
@@ -9586,79 +9847,47 @@ index 7c31daa4c..eae4fd004 100644
 -            return Err(HwpError::RenderError(
 -                "붙인 표의 행 수가 최대치(65535)를 넘습니다".to_string(),
 -            ));
--        }
--
--        // 3) 뒤 표 분리 회수.
--        let (back_table, back_reflow_key) = {
--            let para = &mut self.document.sections[section_idx].paragraphs[back_para_idx];
--            match para.controls.remove(back_ctrl_idx) {
--                Control::Table(t) => {
--                    let key = super::super::TableTextReflowKey::from_table(t.as_ref());
--                    (*t, key)
--                }
--                _ => unreachable!("표 컨트롤 위치 확인됨"),
--            }
--        };
--        self.render_normalization
--            .text_reflowed_tables
--            .remove(&back_reflow_key);
--
--        // 4) 앞 표에 행 이어붙이기. (이 조회는 2)에서 이미 성공한 재차용이라
--        //    실패하지 않는다 — borrow 를 좁히기 위한 재조회일 뿐이다.)
--        {
--            let table = self.get_table_mut(section_idx, parent_para_idx, control_idx)?;
--            let mut back_cells = back_table.cells;
--            for cell in &mut back_cells {
--                cell.row += front_rows;
--            }
--            table.cells.extend(back_cells);
--            table.row_count += back_table.row_count;
--            // row_sizes(행별 셀 수)는 이어붙인 셀에서 재계산한다 — 어느 쪽이든
--            // row_sizes 가 어긋나 있던 문서에서도 결과가 자기 일관된다.
--            table.rebuild_row_sizes();
--            table.col_count = table.col_count.max(back_table.col_count);
--            // 폭은 아래 update_ctrl_dimensions() 가 병합된 칸 폭에서 재계산한다.
--            // zone 서식 보존: 뒤 표 zone 은 행 오프셋을 더해 이어 붙인다.
--            let mut back_zones = back_table.zones;
--            for z in &mut back_zones {
--                z.start_row += front_rows;
--                z.end_row += front_rows;
--            }
--            table.zones.extend(back_zones);
--            table.rebuild_grid();
--            table.update_ctrl_dimensions();
--        }
-+        control_idx: usize,
-+    ) -> Result<String, HwpError> {
-+        let (back_para_idx, back_ctrl_idx, _, _) = find_next_table(
-+            &self.document.sections.get(section_idx)
-+                .ok_or_else(|| HwpError::RenderError("구역 인덱스 범위 초과".to_string()))?.paragraphs,
-+            parent_para_idx,
-+        )?;
-+        let merged_text_reflow =
-+            self.table_text_reflowed_path_exists(section_idx, parent_para_idx, control_idx)
-+                || self.table_text_reflowed_path_exists(section_idx, back_para_idx, back_ctrl_idx);
- 
--        // 5) 사이 빈 문단들과 뒤 표 host 문단 제거.
--        self.document.sections[section_idx]
--            .paragraphs
--            .drain(parent_para_idx + 1..=back_para_idx);
 +        let (back_reflow_key, row_count) = merge_table_paragraphs(
 +            &mut self.document.sections[section_idx].paragraphs, parent_para_idx, control_idx,
 +        )?;
 +        self.render_normalization.text_reflowed_tables.remove(&back_reflow_key);
-         if merged_text_reflow {
-             self.mark_table_text_reflowed_after_edit(section_idx, parent_para_idx, control_idx)?;
-         }
-@@ -574,10 +847,232 @@ impl DocumentCore {
-         });
-         Ok(super::super::helpers::json_ok_with(&format!(
-             "\"rowCount\":{}",
--            front_rows + back_rows
++        if merged_text_reflow {
++            self.mark_table_text_reflowed_after_edit(section_idx, parent_para_idx, control_idx)?;
++        }
++
++        // [Task #2299] host 표 높이가 늘고 뒤 문단들이 당겨졌으므로 저장 vpos 를
++        // 재계산한다 — 방치하면 stale vpos 가 그대로 직렬화된다.
++        // (delete_table_control_native 의 동일 계약 블록 참조)
++        let stored_end_for_reset = crate::renderer::composer::paragraph_flow_end(
++            &self.document.sections[section_idx].paragraphs[parent_para_idx],
++        );
++        self.reflow_paragraph(section_idx, parent_para_idx);
++        let doc_hwp3_layout = self.document.layout_profile().hwp3_layout();
++        crate::renderer::composer::recalculate_section_vpos(
++            &mut self.document.sections[section_idx].paragraphs,
++            parent_para_idx,
++            None,
++            stored_end_for_reset,
++            &self.styles,
++            self.dpi,
++            doc_hwp3_layout,
++        );
++
++        self.document.sections[section_idx].raw_stream = None;
++        self.recompose_section(section_idx);
++        self.paginate_if_needed();
++
++        self.event_log.push(DocumentEvent::TablesMerged {
++            section: section_idx,
++            para: parent_para_idx,
++            ctrl: control_idx,
++        });
++        Ok(super::super::helpers::json_ok_with(&format!(
++            "\"rowCount\":{}",
 +            row_count
-         )))
-     }
- 
++        )))
++    }
++
 +    pub fn split_table_by_cell_path_native(
 +        &mut self,
 +        section_idx: usize,
@@ -9808,7 +10037,7 @@ index 7c31daa4c..eae4fd004 100644
 +    ) -> Result<String, HwpError> {
 +        if path.len() == 1 {
 +            return self.split_table_cell_into_native(section_idx, parent_para_idx, path[0].0, row, col, n_rows, m_cols, equal_row_height, merge_first);
-+        }
+         }
 +        let mut table = self.resolve_table_by_path(section_idx, parent_para_idx, path)?.clone();
 +        table.split_cell_into(row, col, n_rows, m_cols, equal_row_height, merge_first).map_err(HwpError::RenderError)?;
 +        let cell_count = table.cells.len();
@@ -9822,7 +10051,46 @@ index 7c31daa4c..eae4fd004 100644
 +        });
 +        Ok(super::super::helpers::json_ok_with(&format!("\"cellCount\":{}", cell_count)))
 +    }
-+
+ 
+-        // 3) 뒤 표 분리 회수.
+-        let (back_table, back_reflow_key) = {
+-            let para = &mut self.document.sections[section_idx].paragraphs[back_para_idx];
+-            match para.controls.remove(back_ctrl_idx) {
+-                Control::Table(t) => {
+-                    let key = super::super::TableTextReflowKey::from_table(t.as_ref());
+-                    (*t, key)
+-                }
+-                _ => unreachable!("표 컨트롤 위치 확인됨"),
+-            }
+-        };
+-        self.render_normalization
+-            .text_reflowed_tables
+-            .remove(&back_reflow_key);
+-
+-        // 4) 앞 표에 행 이어붙이기. (이 조회는 2)에서 이미 성공한 재차용이라
+-        //    실패하지 않는다 — borrow 를 좁히기 위한 재조회일 뿐이다.)
+-        {
+-            let table = self.get_table_mut(section_idx, parent_para_idx, control_idx)?;
+-            let mut back_cells = back_table.cells;
+-            for cell in &mut back_cells {
+-                cell.row += front_rows;
+-            }
+-            table.cells.extend(back_cells);
+-            table.row_count += back_table.row_count;
+-            // row_sizes(행별 셀 수)는 이어붙인 셀에서 재계산한다 — 어느 쪽이든
+-            // row_sizes 가 어긋나 있던 문서에서도 결과가 자기 일관된다.
+-            table.rebuild_row_sizes();
+-            table.col_count = table.col_count.max(back_table.col_count);
+-            // 폭은 아래 update_ctrl_dimensions() 가 병합된 칸 폭에서 재계산한다.
+-            // zone 서식 보존: 뒤 표 zone 은 행 오프셋을 더해 이어 붙인다.
+-            let mut back_zones = back_table.zones;
+-            for z in &mut back_zones {
+-                z.start_row += front_rows;
+-                z.end_row += front_rows;
+-            }
+-            table.zones.extend(back_zones);
+-            table.rebuild_grid();
+-            table.update_ctrl_dimensions();
 +    pub fn split_table_cells_in_range_by_cell_path_native(
 +        &mut self,
 +        section_idx: usize,
@@ -9838,24 +10106,60 @@ index 7c31daa4c..eae4fd004 100644
 +    ) -> Result<String, HwpError> {
 +        if path.len() == 1 {
 +            return self.split_table_cells_in_range_native(section_idx, parent_para_idx, path[0].0, start_row, start_col, end_row, end_col, n_rows, m_cols, equal_row_height);
-+        }
+         }
+-
+-        // 5) 사이 빈 문단들과 뒤 표 host 문단 제거.
+-        self.document.sections[section_idx]
+-            .paragraphs
+-            .drain(parent_para_idx + 1..=back_para_idx);
+-        if merged_text_reflow {
+-            self.mark_table_text_reflowed_after_edit(section_idx, parent_para_idx, control_idx)?;
 +        // Commit only after every cell split succeeds.
 +        let mut table = self.resolve_table_by_path(section_idx, parent_para_idx, path)?.clone();
 +        if start_row > end_row || start_col > end_col
 +            || end_row >= table.row_count || end_col >= table.col_count
 +        {
 +            return Err(HwpError::RenderError("분할 범위가 표 크기를 벗어납니다".to_string()));
-+        }
+         }
+-
+-        // [Task #2299] host 표 높이가 늘고 뒤 문단들이 당겨졌으므로 저장 vpos 를
+-        // 재계산한다 — 방치하면 stale vpos 가 그대로 직렬화된다.
+-        // (delete_table_control_native 의 동일 계약 블록 참조)
+-        let stored_end_for_reset = crate::renderer::composer::paragraph_flow_end(
+-            &self.document.sections[section_idx].paragraphs[parent_para_idx],
+-        );
+-        self.reflow_paragraph(section_idx, parent_para_idx);
+-        let doc_hwp3_layout = self.document.layout_profile().hwp3_layout();
+-        crate::renderer::composer::recalculate_section_vpos(
+-            &mut self.document.sections[section_idx].paragraphs,
+-            parent_para_idx,
+-            None,
+-            stored_end_for_reset,
+-            &self.styles,
+-            self.dpi,
+-            doc_hwp3_layout,
+-        );
+-
+-        self.document.sections[section_idx].raw_stream = None;
+-        self.recompose_section(section_idx);
+-        self.paginate_if_needed();
+-
+-        self.event_log.push(DocumentEvent::TablesMerged {
 +        table.split_cells_in_range(start_row, start_col, end_row, end_col, n_rows, m_cols, equal_row_height).map_err(HwpError::RenderError)?;
 +        let cell_count = table.cells.len();
 +        *self.resolve_table_mut_by_cell_path(section_idx, parent_para_idx, path)? = table;
 +        self.finish_nested_cell_structure_edit(section_idx, parent_para_idx, path)?;
 +        self.event_log.push(DocumentEvent::TableStructureChangedByPath {
-+            section: section_idx,
-+            para: parent_para_idx,
+             section: section_idx,
+             para: parent_para_idx,
+-            ctrl: control_idx,
 +            cell_path: path.to_vec(),
 +            operation: "splitCellsInRange",
-+        });
+         });
+-        Ok(super::super::helpers::json_ok_with(&format!(
+-            "\"rowCount\":{}",
+-            front_rows + back_rows
+-        )))
 +        Ok(super::super::helpers::json_ok_with(&format!("\"cellCount\":{}", cell_count)))
 +    }
 +
@@ -9879,12 +10183,107 @@ index 7c31daa4c..eae4fd004 100644
 +            self.recalculate_cell_paragraph_vpos_by_path(section_idx, parent_para_idx, &cell_path, 0, None);
 +        }
 +        self.finish_table_structure_edit_by_path(section_idx, parent_para_idx, path, false)
+     }
+ 
+     /// 표 셀을 병합한다 (네이티브).
+@@ -922,6 +1417,80 @@ impl DocumentCore {
+         )))
+     }
+ 
++    pub fn copy_table_cells_transposed_by_cell_path_native(
++        &mut self,
++        section_idx: usize,
++        parent_para_idx: usize,
++        path: &[(usize, usize, usize)],
++        start_row: u16,
++        start_col: u16,
++        end_row: u16,
++        end_col: u16,
++    ) -> Result<String, HwpError> {
++        if path.len() == 1 {
++            return self.copy_table_cells_transposed_native(section_idx, parent_para_idx, path[0].0, start_row, start_col, end_row, end_col);
++        }
++        let data = self.resolve_table_by_path(section_idx, parent_para_idx, path)?
++            .copy_transpose_range(start_row, start_col, end_row, end_col)
++            .map_err(HwpError::RenderError)?;
++        let (source_rows, source_cols) = (data.source_rows, data.source_cols);
++        self.table_transpose_clipboard = Some(TableTransposeClipboard { data });
++        Ok(super::super::helpers::json_ok_with(&format!(
++            "\"sourceRows\":{},\"sourceCols\":{},\"targetRows\":{},\"targetCols\":{}",
++            source_rows, source_cols, source_cols, source_rows
++        )))
 +    }
 +
-     /// 표 셀을 병합한다 (네이티브).
-     pub fn merge_table_cells_native(
++    pub fn paste_table_cells_transposed_by_cell_path_native(
++        &mut self,
++        section_idx: usize,
++        parent_para_idx: usize,
++        path: &[(usize, usize, usize)],
++        start_row: u16,
++        start_col: u16,
++    ) -> Result<String, HwpError> {
++        if path.len() == 1 {
++            return self.paste_table_cells_transposed_native(section_idx, parent_para_idx, path[0].0, start_row, start_col);
++        }
++        let data = self.table_transpose_clipboard.as_ref()
++            .ok_or_else(|| HwpError::RenderError("행/열 바꿈 복사 데이터가 없습니다".to_string()))?
++            .data.clone();
++        let mut table = self.resolve_table_by_path(section_idx, parent_para_idx, path)?.clone();
++        table.paste_transposed_cells(start_row, start_col, &data).map_err(HwpError::RenderError)?;
++        *self.resolve_table_mut_by_cell_path(section_idx, parent_para_idx, path)? = table;
++        self.finish_nested_cell_structure_edit(section_idx, parent_para_idx, path)?;
++        self.event_log.push(DocumentEvent::TableStructureChangedByPath {
++            section: section_idx, para: parent_para_idx, cell_path: path.to_vec(), operation: "pasteTransposedCells",
++        });
++        Ok(super::super::helpers::json_ok_with(&format!(
++            "\"sourceRows\":{},\"sourceCols\":{},\"targetRows\":{},\"targetCols\":{}",
++            data.source_rows, data.source_cols, data.source_cols, data.source_rows
++        )))
++    }
++
++    pub fn transpose_table_cells_in_place_by_cell_path_native(
++        &mut self,
++        section_idx: usize,
++        parent_para_idx: usize,
++        path: &[(usize, usize, usize)],
++    ) -> Result<String, HwpError> {
++        if path.len() == 1 {
++            return self.transpose_table_cells_in_place_native(section_idx, parent_para_idx, path[0].0);
++        }
++        let mut table = self.resolve_table_by_path(section_idx, parent_para_idx, path)?.clone();
++        let (source_rows, source_cols) = (table.row_count, table.col_count);
++        table.transpose_unmerged_table_in_place().map_err(HwpError::RenderError)?;
++        *self.resolve_table_mut_by_cell_path(section_idx, parent_para_idx, path)? = table;
++        self.finish_nested_cell_structure_edit(section_idx, parent_para_idx, path)?;
++        self.event_log.push(DocumentEvent::TableStructureChangedByPath {
++            section: section_idx, para: parent_para_idx, cell_path: path.to_vec(), operation: "transposeCells",
++        });
++        Ok(super::super::helpers::json_ok_with(&format!(
++            "\"sourceRows\":{},\"sourceCols\":{},\"targetRows\":{},\"targetCols\":{}",
++            source_rows, source_cols, source_cols, source_rows
++        )))
++    }
++
+     /// 행/열 바꿈 복사 버퍼를 커서 위치에 새 표로 생성해 붙여넣는다.
+     pub fn paste_table_cells_transposed_as_new_table_native(
          &mut self,
-@@ -1269,6 +1764,19 @@ impl DocumentCore {
+@@ -974,6 +1543,15 @@ impl DocumentCore {
+         self.table_transpose_clipboard.is_some()
+     }
+ 
++    pub fn get_table_transpose_clipboard_info_native(&self) -> String {
++        let Some(clipboard) = &self.table_transpose_clipboard else { return "null".to_string(); };
++        let data = &clipboard.data;
++        super::super::helpers::json_ok_with(&format!(
++            "\"sourceRows\":{},\"sourceCols\":{},\"targetRows\":{},\"targetCols\":{}",
++            data.source_rows, data.source_cols, data.source_cols, data.source_rows
++        ))
++    }
++
+     pub(crate) fn get_table_dimensions_native(
+         &self,
+         section_idx: usize,
+@@ -1269,6 +1847,19 @@ impl DocumentCore {
          control_idx: usize,
          cell_idx: usize,
          json: &str,
@@ -9904,7 +10303,7 @@ index 7c31daa4c..eae4fd004 100644
      ) -> Result<String, HwpError> {
          let parsed: serde_json::Value =
              serde_json::from_str(json).unwrap_or(serde_json::Value::Null);
-@@ -1304,7 +1812,7 @@ impl DocumentCore {
+@@ -1304,7 +1895,7 @@ impl DocumentCore {
              Some(self.normalize_cell_border_fill_json_for_edit(
                  section_idx,
                  parent_para_idx,
@@ -9913,7 +10312,7 @@ index 7c31daa4c..eae4fd004 100644
                  cell_idx,
                  json,
              ))
-@@ -1327,7 +1835,7 @@ impl DocumentCore {
+@@ -1327,7 +1918,7 @@ impl DocumentCore {
              let mut needs_reflow = false;
              let mut size_changed = false;
              let mut width_changed = false;
@@ -9922,7 +10321,7 @@ index 7c31daa4c..eae4fd004 100644
              let original_width = table.common.width;
              let direct_border_fill_id = if has_border_fill_change {
                  None
-@@ -1422,12 +1930,14 @@ impl DocumentCore {
+@@ -1422,12 +2013,14 @@ impl DocumentCore {
          if needs_reflow {
              let para_count = reflow_para_count;
              for cell_para_idx in 0..para_count {
@@ -9943,7 +10342,7 @@ index 7c31daa4c..eae4fd004 100644
                  );
              }
          }
-@@ -1465,7 +1975,7 @@ impl DocumentCore {
+@@ -1465,7 +2058,7 @@ impl DocumentCore {
  
              // 대상 셀 정보 추출 + border_fill_id 변경
              let (target_row, target_col, target_col_span, target_row_span) = {
@@ -9952,7 +10351,7 @@ index 7c31daa4c..eae4fd004 100644
                  let (row, col, col_span, row_span) = {
                      let cell = table.cells.get_mut(cell_idx).ok_or_else(|| {
                          HwpError::RenderError(format!("셀 인덱스 {} 범위 초과", cell_idx))
-@@ -1510,10 +2020,10 @@ impl DocumentCore {
+@@ -1510,10 +2103,10 @@ impl DocumentCore {
  
              // 이웃 셀의 공유 엣지 테두리를 갱신
              // borders 배열: [좌(0), 우(1), 상(2), 하(3)]
@@ -9965,7 +10364,7 @@ index 7c31daa4c..eae4fd004 100644
                  cell_idx,
                  target_row,
                  target_col,
-@@ -1624,7 +2134,7 @@ impl DocumentCore {
+@@ -1624,7 +2217,7 @@ impl DocumentCore {
          &self,
          section_idx: usize,
          parent_para_idx: usize,
@@ -9974,7 +10373,7 @@ index 7c31daa4c..eae4fd004 100644
          cell_idx: usize,
          json: &str,
      ) -> String {
-@@ -1643,16 +2153,7 @@ impl DocumentCore {
+@@ -1643,16 +2236,7 @@ impl DocumentCore {
              return json.to_string();
          }
  
@@ -9992,7 +10391,7 @@ index 7c31daa4c..eae4fd004 100644
              return json.to_string();
          };
          let Some(cell) = table.cells.get(cell_idx) else {
-@@ -2055,6 +2556,7 @@ impl DocumentCore {
+@@ -2055,6 +2639,7 @@ impl DocumentCore {
      /// 변경이 반영되지 않을 수 있으므로, 이웃 셀의 대응 테두리도 함께 갱신한다.
      ///
      /// borders 배열: [좌(0), 우(1), 상(2), 하(3)]
@@ -10000,7 +10399,7 @@ index 7c31daa4c..eae4fd004 100644
      fn update_neighbor_borders(
          &mut self,
          section_idx: usize,
-@@ -2066,6 +2568,24 @@ impl DocumentCore {
+@@ -2066,6 +2651,24 @@ impl DocumentCore {
          target_col_span: usize,
          target_row_span: usize,
          new_borders: &[crate::model::style::BorderLine; 4],
@@ -10025,7 +10424,7 @@ index 7c31daa4c..eae4fd004 100644
      ) -> Vec<(usize, u16, u16)> {
          use crate::model::style::BorderLine;
  
-@@ -2076,7 +2596,7 @@ impl DocumentCore {
+@@ -2076,7 +2679,7 @@ impl DocumentCore {
          // 1단계: 이웃 셀 탐색 — (셀 인덱스, old_bf_id, 갱신할 방향, 새 테두리)
          let mut updates: Vec<(usize, u16, usize, BorderLine)> = Vec::new();
          {
@@ -10034,7 +10433,7 @@ index 7c31daa4c..eae4fd004 100644
                  Ok(t) => t,
                  Err(_) => return neighbor_changes,
              };
-@@ -2168,7 +2688,7 @@ impl DocumentCore {
+@@ -2168,7 +2771,7 @@ impl DocumentCore {
                  }
              };
  
@@ -10043,7 +10442,7 @@ index 7c31daa4c..eae4fd004 100644
                  Ok(t) => t,
                  Err(_) => return neighbor_changes,
              };
-@@ -2386,6 +2906,7 @@ impl DocumentCore {
+@@ -2386,6 +2989,7 @@ impl DocumentCore {
              }
          }
  
@@ -10051,7 +10450,7 @@ index 7c31daa4c..eae4fd004 100644
          self.document.sections[section_idx].raw_stream = None;
          self.recompose_section(section_idx);
          self.paginate_if_needed();
-@@ -2561,97 +3082,54 @@ impl DocumentCore {
+@@ -2561,97 +3165,54 @@ impl DocumentCore {
          delta_h: i32,
          delta_v: i32,
      ) -> Result<String, HwpError> {
@@ -10190,7 +10589,7 @@ index 7c31daa4c..eae4fd004 100644
      }
  
      /// 표 속성을 조회한다 (네이티브).
-@@ -2661,25 +3139,18 @@ impl DocumentCore {
+@@ -2661,25 +3222,18 @@ impl DocumentCore {
          parent_para_idx: usize,
          control_idx: usize,
      ) -> Result<String, HwpError> {
@@ -10227,7 +10626,7 @@ index 7c31daa4c..eae4fd004 100644
  
          let pb = match table.page_break {
              crate::model::table::TablePageBreak::None => 0,
-@@ -2783,6 +3254,18 @@ impl DocumentCore {
+@@ -2783,6 +3337,18 @@ impl DocumentCore {
          parent_para_idx: usize,
          control_idx: usize,
          json: &str,
@@ -10246,7 +10645,7 @@ index 7c31daa4c..eae4fd004 100644
      ) -> Result<String, HwpError> {
          use super::super::helpers::{json_bool, json_i16, json_i32, json_str, json_u32, json_u8};
  
-@@ -2797,7 +3280,7 @@ impl DocumentCore {
+@@ -2797,7 +3363,7 @@ impl DocumentCore {
              .map(|(idx, s)| (idx as u8, s.para_shape_id, s.char_shape_id as u32))
              .unwrap_or((0, 0, 0));
  
@@ -10255,7 +10654,7 @@ index 7c31daa4c..eae4fd004 100644
  
          if let Some(v) = json_i16(json, "cellSpacing") {
              table.cell_spacing = v;
-@@ -3105,7 +3588,7 @@ impl DocumentCore {
+@@ -3105,7 +3671,7 @@ impl DocumentCore {
              || json.contains("\"centerLine\"");
          if has_border_fill_change {
              let new_bf_id = self.create_border_fill_from_json(json);
@@ -10264,7 +10663,7 @@ index 7c31daa4c..eae4fd004 100644
              table.border_fill_id = new_bf_id;
              for cell in &mut table.cells {
                  cell.border_fill_id = new_bf_id;
-@@ -3116,44 +3599,61 @@ impl DocumentCore {
+@@ -3116,44 +3682,61 @@ impl DocumentCore {
          // 중간 표 캡션 삭제 시 남은 표 번호가 한컴처럼 1부터 이어지도록 보장한다.
          if caption_created || caption_changed {
              crate::parser::assign_auto_numbers(&mut self.document);
@@ -10629,10 +11028,10 @@ index 16f230b54..50af4c287 100644
            <div class="md-item disabled" data-cmd="table:cell-width-equal"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.cellWidthEqual.label">셀 너비를 같게</span><span class="md-shortcut">W</span></div>
            <div class="md-item disabled" data-cmd="table:transpose-copy"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.transposeCopy.label">행/열 바꿈 복사</span></div>
 diff --git a/rhwp-studio/src/core/mutation-method-registry.ts b/rhwp-studio/src/core/mutation-method-registry.ts
-index 2d05c75e1..86ea850bd 100755
+index 2d05c75e1..2dc78b6b1 100755
 --- a/rhwp-studio/src/core/mutation-method-registry.ts
 +++ b/rhwp-studio/src/core/mutation-method-registry.ts
-@@ -31,11 +31,11 @@ export const MUTATING_METHODS: readonly string[] = [
+@@ -31,13 +31,14 @@ export const MUTATING_METHODS: readonly string[] = [
    'splitParagraphInCell', 'mergeParagraphInCell', 'splitParagraphInCellByPath',
    'mergeParagraphInCellByPath',
    // 표 구조/속성
@@ -10645,7 +11044,19 @@ index 2d05c75e1..86ea850bd 100755
 +  'moveTableOffset', 'moveTableOffsetByPath', 'setTableProperties', 'setCellProperties', 'setCellZoneProperties',
    'applyCellBorderFillIds', 'removeBorderFillTails',
    'pasteTableCellsTransposed', 'transposeTableCellsInPlace', 'pasteTableCellsTransposedAsTable',
++  'pasteTableCellsTransposedByPath', 'transposeTableCellsInPlaceByPath',
    'evaluateTableFormula',
+   // 그림/도형/수식 개체
+   'insertPicture', 'assignPictureImage', 'setPictureProperties',
+@@ -123,6 +124,8 @@ export const EXCLUDED_NON_DOCUMENT: readonly string[] = [
+   // [#7002] 내부 클립보드 적재 — 문서는 읽기만 하고 복사본을 코어 버퍼에 담는다.
+   'copySelection', 'copySelectionInCell', 'copySelectionInCellByPath',
+   'copySelectionInHeaderFooter', 'copyControl', 'copyTableCellsTransposed',
++  'copyTableCellsTransposedByPath',
++  'getTableTransposeClipboardInfo',
+   // [#7002] 조회 — 본문은 읽기뿐인데 `*_mut` 접근자를 거치느라 `&mut self` 가 됐다.
+   'getCellCharPropertiesAtByPath', 'getCharShapeRunsInCellByPath',
+ ];
 diff --git a/rhwp-studio/src/engine/command.ts b/rhwp-studio/src/engine/command.ts
 index 6ec166661..e84d8c624 100644
 --- a/rhwp-studio/src/engine/command.ts
