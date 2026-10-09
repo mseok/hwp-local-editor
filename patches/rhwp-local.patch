@@ -1,5 +1,5 @@
 diff --git a/rhwp-studio/src/core/wasm-bridge.ts b/rhwp-studio/src/core/wasm-bridge.ts
-index 58162bab6..18e2ce387 100644
+index 58162bab6..68165c20c 100644
 --- a/rhwp-studio/src/core/wasm-bridge.ts
 +++ b/rhwp-studio/src/core/wasm-bridge.ts
 @@ -10,6 +10,7 @@ import type { HyperlinkTarget, HyperlinkContext } from './hyperlink';
@@ -271,6 +271,15 @@ index 58162bab6..18e2ce387 100644
    }
  
    searchAllText(query: string, caseSensitive: boolean, includeCells: boolean = false): import('./types').SearchHit[] {
+@@ -3804,7 +3944,7 @@ export class WasmBridge {
+ 
+   replaceAll(query: string, newText: string, caseSensitive: boolean): import('./types').ReplaceAllResult {
+     if (!this.doc || typeof (this.doc as any).replaceAll !== 'function') return { ok: false };
+-    return JSON.parse((this.doc as any).replaceAll(query, newText, caseSensitive));
++    return JSON.parse((this.doc as any).replaceAll(query, newText, caseSensitive, true));
+   }
+ 
+   getPositionOfPage(globalPage: number): { ok: boolean; sec?: number; para?: number; charOffset?: number } {
 diff --git a/rhwp-studio/src/main.ts b/rhwp-studio/src/main.ts
 index 91923c5cf..01795a96e 100644
 --- a/rhwp-studio/src/main.ts
@@ -7153,7 +7162,7 @@ index 2f0b5ae..0fb0243 100644
          w,
          "hh:breakSetting",
 diff --git a/src/wasm_api.rs b/src/wasm_api.rs
-index 2031085e3..32ab40f3a 100644
+index 2031085e3..2a6548e66 100644
 --- a/src/wasm_api.rs
 +++ b/src/wasm_api.rs
 @@ -189,6 +189,11 @@ fn render_page_to_canvas_filtered_with_profile_impl(
@@ -7629,7 +7638,28 @@ index 2031085e3..32ab40f3a 100644
              )
              .map_err(|e| e.into())
      }
-@@ -6082,8 +6410,12 @@ impl HwpDocument {
+@@ -5567,10 +5895,17 @@ impl HwpDocument {
+         query: &str,
+         new_text: &str,
+         case_sensitive: bool,
++        include_table_captions: Option<bool>,
+     ) -> Result<String, JsValue> {
+-        self.core
+-            .replace_all_native(query, new_text, case_sensitive)
+-            .map_err(|e| e.into())
++        if include_table_captions.unwrap_or(false) {
++            self.core
++                .replace_all_with_captions_native(query, new_text, case_sensitive)
++                .map_err(|e| e.into())
++        } else {
++            self.core
++                .replace_all_native(query, new_text, case_sensitive)
++                .map_err(|e| e.into())
++        }
+     }
+ 
+     /// 글로벌 쪽 번호에 해당하는 첫 문단 위치 반환
+@@ -6082,8 +6417,12 @@ impl HwpDocument {
  
      /// 문서 글 전체 — `GetTextFile("UNICODE")`. 원문 Unicode JSON 문자열이다.
      #[wasm_bindgen(js_name = getTextFileUnicode)]
@@ -9034,10 +9064,110 @@ index 8e99cf288..fbee9759b 100644
      // 기록한다 (#1320 계약, picture-props-dialog(#2027)와 동일 패턴).
      // services 미주입 환경에서만 직접 적용 fallback.
 diff --git a/src/document_core/queries/search_query.rs b/src/document_core/queries/search_query.rs
-index df458646c..11306e4d9 100644
+index df458646c..04fb655b9 100644
 --- a/src/document_core/queries/search_query.rs
 +++ b/src/document_core/queries/search_query.rs
-@@ -342,6 +342,23 @@ impl DocumentCore {
+@@ -3,7 +3,7 @@
+ //! 본문, 표 셀, 글상자 등 중첩 컨트롤 내부 텍스트를 포함한 전체 검색.
+ 
+ use crate::document_core::helpers::get_textbox_from_shape;
+-use crate::document_core::DocumentCore;
++use crate::document_core::{DocumentCore, TABLE_CAPTION_CELL_SENTINEL};
+ use crate::error::HwpError;
+ use crate::model::control::Control;
+ 
+@@ -40,7 +40,7 @@ impl CellHit {
+     /// 이상은 이 표현으로 담을 수 없으므로 `None` 이고, 결과에는 `cellPath` 로 실린다.
+     fn flat(&self) -> Option<(usize, usize, usize, usize)> {
+         match self.path.as_slice() {
+-            [(ctrl_idx, cell_idx, cell_para_idx)] => {
++            [(ctrl_idx, cell_idx, cell_para_idx)] if *cell_idx != TABLE_CAPTION_CELL_SENTINEL => {
+                 Some((self.parent_para, *ctrl_idx, *cell_idx, *cell_para_idx))
+             }
+             _ => None,
+@@ -215,6 +215,7 @@ fn search_nested_controls(
+     query: &str,
+     case_sensitive: bool,
+     results: &mut Vec<SearchHit>,
++    include_captions: bool,
+ ) {
+     if prefix.len() >= MAX_NEST_DEPTH {
+         return;
+@@ -248,10 +249,43 @@ fn search_nested_controls(
+                             query,
+                             case_sensitive,
+                             results,
++                            include_captions,
+                         );
+                         prefix.pop();
+                     }
+                 }
++                if include_captions {
++                    if let Some(caption) = &table.caption {
++                        for (para_idx, para) in caption.paragraphs.iter().enumerate() {
++                            prefix.push((ctrl_idx, TABLE_CAPTION_CELL_SENTINEL, para_idx));
++                            let hit = CellHit {
++                                parent_para,
++                                path: prefix.clone(),
++                            };
++                            push_container_hits(
++                                para,
++                                sec_idx,
++                                parent_para,
++                                Some(&hit),
++                                false,
++                                query,
++                                case_sensitive,
++                                results,
++                            );
++                            search_nested_controls(
++                                para,
++                                sec_idx,
++                                parent_para,
++                                prefix,
++                                query,
++                                case_sensitive,
++                                results,
++                                include_captions,
++                            );
++                            prefix.pop();
++                        }
++                    }
++                }
+             }
+             Control::Shape(shape) => {
+                 if let Some(tb) = get_textbox_from_shape(shape) {
+@@ -280,6 +314,7 @@ fn search_nested_controls(
+                             query,
+                             case_sensitive,
+                             results,
++                            include_captions,
+                         );
+                         prefix.pop();
+                     }
+@@ -291,7 +326,12 @@ fn search_nested_controls(
+ }
+ 
+ /// 문서 전체를 순회하며 query와 일치하는 모든 위치를 반환
+-fn search_all(doc: &DocumentCore, query: &str, case_sensitive: bool) -> Vec<SearchHit> {
++fn search_all(
++    doc: &DocumentCore,
++    query: &str,
++    case_sensitive: bool,
++    include_captions: bool,
++) -> Vec<SearchHit> {
+     let mut results = vec![];
+ 
+     for (sec_idx, section) in doc.document.sections.iter().enumerate() {
+@@ -318,6 +358,7 @@ fn search_all(doc: &DocumentCore, query: &str, case_sensitive: bool) -> Vec<Sear
+                 query,
+                 case_sensitive,
+                 &mut results,
++                include_captions,
+             );
+         }
+     }
+@@ -342,12 +383,29 @@ impl DocumentCore {
          forward: bool,
          case_sensitive: bool,
          include_cells: bool,
@@ -9061,7 +9191,14 @@ index df458646c..11306e4d9 100644
      ) -> Result<String, HwpError> {
          if query.is_empty() {
              return Ok(r#"{"found":false}"#.to_string());
-@@ -362,22 +379,15 @@ impl DocumentCore {
+         }
+ 
+-        let all_hits = search_all(self, query, case_sensitive);
++        let all_hits = search_all(self, query, case_sensitive, from_path.is_some());
+         if all_hits.is_empty() {
+             return Ok(r#"{"found":false}"#.to_string());
+         }
+@@ -362,22 +420,15 @@ impl DocumentCore {
          // (parentPara·ctrlIdx·cellIdx·cellPara)로 따로 실린다. 그래서 아래 전/후 판정은
          // 셀 히트에서도 그대로 성립한다(표가 놓인 문단 기준으로 정렬된다).
          let body_hits: Vec<&SearchHit> = if include_cells {
@@ -9088,7 +9225,7 @@ index df458646c..11306e4d9 100644
                  })
                  .collect()
          } else {
-@@ -391,6 +401,32 @@ impl DocumentCore {
+@@ -391,6 +442,32 @@ impl DocumentCore {
          }
          let total_match_count = body_hits.len();
  
@@ -9121,7 +9258,82 @@ index df458646c..11306e4d9 100644
          if forward {
              let after = body_hits.iter().find(|h| {
                  h.sec > from_sec
-
+@@ -434,7 +511,7 @@ impl DocumentCore {
+             return Ok("[]".to_string());
+         }
+ 
+-        let all_hits = search_all(self, query, case_sensitive);
++        let all_hits = search_all(self, query, case_sensitive, false);
+         if all_hits.is_empty() {
+             return Ok("[]".to_string());
+         }
+@@ -528,7 +605,17 @@ impl DocumentCore {
+         new_text: &str,
+         case_sensitive: bool,
+     ) -> Result<String, HwpError> {
+-        self.replace_matches_native(query, new_text, case_sensitive, None)
++        self.replace_matches_native(query, new_text, case_sensitive, None, false)
++    }
++
++    /// Local path-aware editing can explicitly include table captions without widening legacy calls.
++    pub fn replace_all_with_captions_native(
++        &mut self,
++        query: &str,
++        new_text: &str,
++        case_sensitive: bool,
++    ) -> Result<String, HwpError> {
++        self.replace_matches_native(query, new_text, case_sensitive, None, true)
+     }
+ 
+     /// [#3395] 문서 순서 k번째(0 기준) 매치 **하나만** 치환한다. 실물 서식의 체크박스
+@@ -541,7 +628,7 @@ impl DocumentCore {
+         case_sensitive: bool,
+         occurrence: usize,
+     ) -> Result<String, HwpError> {
+-        self.replace_matches_native(query, new_text, case_sensitive, Some(occurrence))
++        self.replace_matches_native(query, new_text, case_sensitive, Some(occurrence), false)
+     }
+ 
+     fn replace_matches_native(
+@@ -550,13 +637,14 @@ impl DocumentCore {
+         new_text: &str,
+         case_sensitive: bool,
+         occurrence: Option<usize>,
++        include_captions: bool,
+     ) -> Result<String, HwpError> {
+         if query.is_empty() {
+             return Ok(r#"{"ok":true,"count":0}"#.to_string());
+         }
+ 
+         // 모든 매치를 찾되, 역순으로 치환 (오프셋 변동 방지)
+-        let mut all_hits = search_all(self, query, case_sensitive);
++        let mut all_hits = search_all(self, query, case_sensitive, include_captions);
+         if let Some(n) = occurrence {
+             // 문서 순서 k번째 하나만 남긴다. 범위를 벗어나면 count 0 (판정은 데이터).
+             all_hits = match all_hits.into_iter().nth(n) {
+@@ -577,18 +665,10 @@ impl DocumentCore {
+ 
+         for hit in &all_hits {
+             if let Some(cell) = hit.cell_context.as_ref() {
+-                // 표 셀 내부 치환
+-                let section = self
+-                    .document
+-                    .sections
+-                    .get_mut(hit.sec)
+-                    .ok_or_else(|| HwpError::RenderError("구역 범위 초과".into()))?;
+-
+-                // [#2792] 평면 좌표를 손으로 풀던 자리다. 경로 해석은 이미 있는 path 코어에
+-                // 맡긴다 — 표·글상자(cell_index = 0 sentinel)를 깊이 제한 없이 같은 규칙으로
+-                // 내려가므로, 셀 안의 표도 바깥 셀과 똑같이 닿는다.
+-                let nested_para =
+-                    Self::resolve_cell_paragraph_mut(section, cell.parent_para, &cell.path)?;
++                // Use the text-editing resolver so captions retain their sentinel path.
++                let nested_para = self.get_cell_paragraph_mut_by_path(
++                    hit.sec, cell.parent_para, &cell.path,
++                )?;
+                 if let Some(equation_index) = hit.equation_control {
+                     let equation = match nested_para.controls.get_mut(equation_index) {
+                         Some(Control::Equation(equation)) => equation,
 diff --git a/rhwp-studio/src/command/commands/edit.ts b/rhwp-studio/src/command/commands/edit.ts
 index 609d0525d..2fff61ba4 100644
 --- a/rhwp-studio/src/command/commands/edit.ts

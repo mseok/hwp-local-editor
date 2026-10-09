@@ -240,3 +240,16 @@ The red reproducer opened the text panel at a 720-pixel page height. Its 619-pix
 Actual hidden Codex browser use exercised both formats at 1230 by 720 pixels. The menu fit inside the iframe and its lower caption command became reachable by scrolling. Both captions were edited and saved as revision 3 with the text panel open. Disk-result reopening and independent parsing verify exact captions, auto-number controls, source hashes, receipt fingerprints, inner styles, ancestor properties, outside labels and enclosing host containment/non-overlap. Both tab warning/error logs are empty. The foreground and private document server were preserved, and native Hancom was not opened.
 
 Caption search and replacement, caption formatting and multiline/side placement, special-object editing, live Claude execution and exact-source native Hancom fidelity remain separate acceptance gates. The full goal remains active.
+
+
+## Caption Find and replacement
+
+Verified on 2026-10-10 with source version `cda5889a38d1918882512ad8303480d1e24bc00de6163b4062695a864970f6ce`. The caption suite passes 47 checks and the existing suites pass their 197 checks, 244 in total. Browser errors, external requests and reported warnings are empty.
+
+The red reproducer found zero of the fifteen caption occurrences through Find, while the caption was present in the saved file and text panel. Path-aware search now visits table-caption paragraphs with the caption sentinel. Even depth-one caption hits use a full path, so single replacement uses the caption-aware text route. The local UI explicitly opts bulk replacement into caption traversal. Legacy selectable search, search-all and three-argument bulk replacement retain their previous caption-free scope. The first patched build passed Find and single replacement but failed bulk replacement because an object resolver treated the sentinel as a regular cell index. Bulk replacement now reuses the existing text-editing paragraph resolver and reflows the affected caption paths.
+
+Twelve additional cases cover new/existing ordinary and two-/three-level captions in HWP/HWPX. Each finds fifteen matches, replaces one, replaces the other fourteen, verifies the intended caption and unrelated cell/ancestor content, undoes the bulk replacement, redoes it, recovers the journal, saves and reopens the disk result. The saved fingerprint includes the final caption. Legacy scope checks confirm that default search and replacement do not silently expand. No fixture widths were changed.
+
+Actual hidden Codex browser use searched three Korean caption occurrences in each format, replaced one, saved revision 1, replaced the remaining two and saved revision 2. Both disk results were reopened in the browser. Independent parsing verifies exact captions, auto-number controls, three retained tables, unchanged source hashes, inner styles, ancestor properties, host containment/non-overlap and receipt/output/expanded-text hashes. The foreground and private document server were preserved. Native Hancom was not opened.
+
+Caption character/paragraph formatting, multiline and side placement, special-object editing, live Claude execution and exact-source native Hancom fidelity remain separate acceptance gates. The full goal remains active.
