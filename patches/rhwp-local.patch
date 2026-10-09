@@ -1511,7 +1511,7 @@ index 16342c689..1cd125fe6 100644
      StoredRowMissPolicy,
  };
 diff --git a/src/renderer/composer/line_breaking.rs b/src/renderer/composer/line_breaking.rs
-index 1c2b7cdc7..b36b31b64 100755
+index 1c2b7cdc7..528703bf0 100755
 --- a/src/renderer/composer/line_breaking.rs
 +++ b/src/renderer/composer/line_breaking.rs
 @@ -956,7 +956,7 @@ fn prepare_paragraph_projection(
@@ -1611,19 +1611,68 @@ index 1c2b7cdc7..b36b31b64 100755
  ) -> bool {
      // An impossible box publishes nothing, and this must be the first thing
      // that happens — before the memo invalidation below, which is already a
-@@ -4453,7 +4473,11 @@ fn reflow_line_segs_impl(
+@@ -4453,7 +4473,38 @@ fn reflow_line_segs_impl(
  
      let text_chars: Vec<char> = para.text.chars().collect();
      let text_len = text_chars.len();
 -    let inline_controls = flow_inline_controls(para);
-+    let inline_controls = if include_inline_tables {
++    let mut inline_controls = if include_inline_tables {
 +        flow_inline_controls_with_tac_tables(para, Some((styles, dpi)))
 +    } else {
 +        flow_inline_controls(para)
 +    };
++    // A leading table and its first visible character are separate stream slots.
++    // If that character cannot fit beside the table, publish an empty object row
++    // before filling the text. Keeping them in one token makes placement move only
++    // the character down, beyond the height that cell measurement reserved.
++    let leading_table_row = if include_inline_tables
++        && supports_tac_table_band_frame_controls(para)
++    {
++        inline_controls.iter().find(|control| control.char_position == 0)
++            .filter(|control| {
++                let first: String = text_chars.iter().take(1).collect();
++                let first_width = to_hwp(measure_token_width(
++                    &ParagraphMetricScope::new(&text_chars, styles)
++                        .with_reflow_slots(&text_chars)
++                        .with_space_metric(SpaceMetric::Stored),
++                    &first, 0, &para.char_offsets, &para.char_shapes, styles, 0, &[],
++                ));
++                let width = to_hwp((available_width_px - indent_px.max(0.0)).max(1.0));
++                control.width_hwp.saturating_add(first_width)
++                    > width.saturating_add(line_break_tolerance_hwp(width))
++            })
++            .map(|control| control.height_hwp)
++    } else {
++        None
++    };
++    if leading_table_row.is_some() {
++        inline_controls.retain(|control| control.char_position != 0);
++    }
  
      // 문단 스타일에서 들여쓰기 및 줄 나눔 설정 조회 (들여쓰기는 목록 마커를 얹은 값)
      let para_style = styles.para_styles.get(para.para_shape_id as usize);
+@@ -4675,6 +4726,11 @@ fn reflow_line_segs_impl(
+     let floating_anchors = floating_anchor_char_font_sizes(para, styles);
+     let preserved_prefix_len = preserved_prefix.len();
+     let mut new_line_segs: Vec<LineSeg> = preserved_prefix;
++    if let Some(height_hwp) = leading_table_row {
++        let mut seg = make_line_seg(0, paragraph_font_size_px(para, styles).unwrap_or(12.0));
++        apply_inline_control_line_height(&mut seg, height_hwp);
++        new_line_segs.push(seg);
++    }
+     for (line_idx, lb) in line_breaks.iter().enumerate() {
+         let utf16_start = if new_line_segs.is_empty() {
+             0 // 첫 번째 줄의 text_start는 항상 0 (문단 시작)
+@@ -4736,6 +4792,9 @@ fn reflow_line_segs_impl(
+ 
+     if forced_inline_line.is_none() && inline_controls.is_empty() {
+         for &(position, _, height_hwp) in &occupied_controls {
++            if position == 0 && leading_table_row.is_some() {
++                continue;
++            }
+             // 명시적 개행으로 정해진 개체 줄에 높이를 싣는다. 최초 줄에 일괄
+             // 적용하면 표 앞 제목이 표 줄로 오인되어 표 뒤로 재배치된다.
+             let line_index = line_breaks
 diff --git a/src/renderer/composer/tests.rs b/src/renderer/composer/tests.rs
 index 7ce3e3d..587be7f 100644
 --- a/src/renderer/composer/tests.rs

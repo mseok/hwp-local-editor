@@ -31,6 +31,21 @@ async function command(f,label,menu='표'){await f.locator('#menu-bar').getByTex
 const cellPath=(p,cell)=>p.map((e,i)=>({...e,cellIndex:i===p.length-1?cell:e.cellIndex}));
 const cellText=(d,p,cell)=>{const a=json(cellPath(p,cell));return d.getTextInCellByPath(0,1,a,0,d.getCellParagraphLengthByPath(0,1,a));};
 function ancestors(source,result,p,ppi=1){for(let depth=1;depth<p.length;depth++){const a=json(p.slice(0,depth));assert.equal(result.getTablePropertiesByPath(0,ppi,a),source.getTablePropertiesByPath(0,1,a));const dims=JSON.parse(source.getTableDimensionsByPath(0,1,a));assert.deepEqual(JSON.parse(result.getTableDimensionsByPath(0,ppi,a)),dims);for(let i=0;i<dims.cellCount;i++)assert.equal(result.getCellPropertiesByPath(0,ppi,a,i),source.getCellPropertiesByPath(0,1,a,i));}}
+function hostTextFits(document){
+  function visit(node,cell){
+    if(node.type==='Cell')cell=node;
+    if(node.type==='TextRun'&&node.text&&cell&&cell.children.some(child=>child.type==='Table')){
+      const b=node.bbox,c=cell.bbox;
+      assert(b.x>=c.x-0.2&&b.x+b.w<=c.x+c.w+0.2&&b.y>=c.y-0.2&&b.y+b.h<=c.y+c.h+0.2,'Rendered cell text must remain inside its enclosing border: '+node.text);
+      for(const table of cell.children.filter(child=>child.type==='Table')){
+        const t=table.bbox;
+        assert(b.x+b.w<=t.x+0.2||b.x>=t.x+t.w-0.2||b.y+b.h<=t.y+0.2||b.y>=t.y+t.h-0.2,'Host text must not overlap its inline table: '+node.text);
+      }
+    }
+    for(const child of node.children||[])visit(child,cell);
+  }
+  for(let page=0;page<document.pageCount();page++)visit(JSON.parse(document.getPageRenderTree(page)),null);
+}
 function check(source,result,p,route){
   const outer=JSON.parse(result.searchAllText('OUTER-1',false,true))[0];ancestors(source,result,p,outer.para);
   if(route==='overflow'){
@@ -42,6 +57,7 @@ function check(source,result,p,route){
   const order=route==='whole'?[0,2,4,1,3,5]:[0,1,0,3,1,5];assert.deepEqual(JSON.parse(result.getTableDimensionsByPath(0,1,json(p))),{rowCount:route==='whole'?2:3,colCount:route==='whole'?3:2,cellCount:6});
   for(let i=0;i<6;i++){assert.equal(cellText(result,p,i),'INNER-'+order[i]);assert.equal(result.getCellCharPropertiesAtByPath(0,1,json(cellPath(p,i)),0),source.getCellCharPropertiesAtByPath(0,1,json(cellPath(p,order[i])),0));const actual=JSON.parse(result.getCellPropertiesByPath(0,1,json(p),i)),expected=JSON.parse(source.getCellPropertiesByPath(0,1,json(p),route==='whole'?order[i]:i));delete actual.width;delete expected.width;delete actual.height;delete expected.height;assert.deepEqual(actual,expected);}
   if(route==='whole'){const xml=unzip(Buffer.from(result.exportHwpx())).get('Contents/section0.xml').toString();assert.match(xml,/<hp:cellzone startRowAddr="0" startColAddr="0" endRowAddr="0" endColAddr="1" borderFillIDRef="1"\/>/,'Transpose must preserve and transpose the cell-zone range');}
+  hostTextFits(result);
   for(const label of ['BODY-UNCHANGED','OUTER-0','OUTER-1',...(p.length===3?['MIDDLE-0']:[])])assert.equal(JSON.parse(result.getTextFileUnicode()).split(label).length,2);
 }
 function nativeChecks(entry,p){const d=new HwpDocument(entry.bytes),bytes=()=>Buffer.from(entry.format==='hwp'?d.exportHwp():d.exportHwpx());try{
