@@ -31,7 +31,7 @@ for(const depth of [2,3]){
     if(depth===3)inner=tableXml(1,1,16000,'MIDDLE-').replace('<hp:t>MIDDLE-0</hp:t>',inner+'<hp:t>MIDDLE-0</hp:t>');
     const entries=unzip(Buffer.from(document.exportHwpx()));entries.set('Contents/section0.xml',Buffer.from(entries.get('Contents/section0.xml').toString().replace('<hp:t>OUTER-0</hp:t>',inner+'<hp:t>OUTER-0</hp:t>')));
     const nested=new HwpDocument(zip(entries));
-    try{for(const format of ['hwp','hwpx'])for(const route of ['keyboard','cell-menu','object-menu']){const file=path.join(root,`depth-${depth}-${route}.${format}`);await writeFile(file,format==='hwp'?nested.exportHwp():nested.exportHwpx());files.push(file);}}
+    try{for(const format of ['hwp','hwpx'])for(const route of ['cut-event','cut-keyboard','cut-menu','keyboard','cell-menu','object-menu']){const file=path.join(root,`depth-${depth}-${route}.${format}`);await writeFile(file,format==='hwp'?nested.exportHwp():nested.exportHwpx());files.push(file);}}
     finally{nested.free();}
   }finally{document.free();}
 }
@@ -49,6 +49,7 @@ const port=18873,base=`http://127.0.0.1:${port}`;
 const child=spawn(process.execPath,['app/server.mjs'],{env:{...process.env,PORT:String(port),DOCUMENT_MANIFEST:manifest},stdio:['ignore','pipe','pipe']});
 const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_EXECUTABLE_PATH||undefined});
 const context=await browser.newContext({viewport:{width:1280,height:1050}});
+await context.grantPermissions(['clipboard-read','clipboard-write'],{origin:base});
 const report={root,checks:[],errors:[],warnings:[],externalRequests:[]};
 context.on('page',page=>{page.on('pageerror',error=>report.errors.push(error.message));page.on('console',message=>{if(['warning','error'].includes(message.type()))report.warnings.push(message.text());});page.on('request',request=>{if(!request.url().startsWith(base+'/')&&!/^(blob|data):/.test(request.url()))report.externalRequests.push(request.url());});});
 const pass=name=>{report.checks.push(name);console.log('PASS',name);};
@@ -60,13 +61,14 @@ async function select(page,text){
   await frame.getByText('검색 결과 1개',{exact:true}).waitFor();await frame.getByRole('button',{name:'찾아 바꾸기 닫기',exact:true}).click();
 }
 async function command(frame,menu,label){await frame.locator('#menu-bar').getByText(menu,{exact:true}).click();await frame.getByText(label,{exact:true}).click();}
+async function cutEvent(input){await input.evaluate(element=>{element.focus();if(!document.execCommand('cut'))throw new Error('Native browser cut event was rejected');});}
 const pathJson=p=>JSON.stringify(p);
 const clean=text=>JSON.parse(text).replace(/\r\n/g,'');
-function unchangedAncestors(source,result,p){
+function unchangedAncestors(source,result,p,resultParent=1){
   for(let depth=1;depth<p.length;depth++){
-    const ancestor=pathJson(p.slice(0,depth));assert.equal(result.getTablePropertiesByPath(0,1,ancestor),source.getTablePropertiesByPath(0,1,ancestor));
-    const dims=JSON.parse(source.getTableDimensionsByPath(0,1,ancestor));assert.deepEqual(JSON.parse(result.getTableDimensionsByPath(0,1,ancestor)),dims);
-    for(let cell=0;cell<dims.cellCount;cell++)assert.equal(result.getCellPropertiesByPath(0,1,ancestor,cell),source.getCellPropertiesByPath(0,1,ancestor,cell));
+    const ancestor=pathJson(p.slice(0,depth));assert.equal(result.getTablePropertiesByPath(0,resultParent,ancestor),source.getTablePropertiesByPath(0,1,ancestor));
+    const dims=JSON.parse(source.getTableDimensionsByPath(0,1,ancestor));assert.deepEqual(JSON.parse(result.getTableDimensionsByPath(0,resultParent,ancestor)),dims);
+    for(let cell=0;cell<dims.cellCount;cell++)assert.equal(result.getCellPropertiesByPath(0,resultParent,ancestor,cell),source.getCellPropertiesByPath(0,1,ancestor,cell));
   }
 }
 function deletion(source,result,p,prefix=''){
@@ -116,7 +118,7 @@ try{
       await page.goto(base+'/editor?id='+entry.id);await ready(page);await select(page,'INNER-4');
       const input=frame.getByRole('textbox',{name:'문서 편집 입력',exact:true});
       if(route!=='cell-menu')await input.press('Escape');
-      if(route==='keyboard')await input.press('Delete');else await command(frame,'표','표 지우기');
+      if(route==='cut-event')await cutEvent(input);else if(route==='cut-keyboard')await input.press('Control+x');else if(route==='cut-menu')await command(frame,'편집','오려 두기');else if(route==='keyboard')await input.press('Delete');else await command(frame,'표','표 지우기');
       await save(page,1);let result=new HwpDocument(await readFile(entry.output));
       try{deletion(source,result,p);}finally{result.free();}
       await input.pressSequentially('HOST>');await save(page,2);result=new HwpDocument(await readFile(entry.output));
@@ -125,12 +127,33 @@ try{
       result=new HwpDocument(await readFile(entry.output));
       try{unchangedAncestors(source,result,p);assert.equal(result.getTextFileUnicode(),source.getTextFileUnicode());assert.deepEqual(JSON.parse(result.getTableDimensionsByPath(0,1,pathJson(p))),{rowCount:3,colCount:2,cellCount:6});}finally{result.free();}
       await select(page,'INNER-4');if(route!=='cell-menu')await input.press('Escape');
-      if(route==='keyboard')await input.press('Backspace');else await command(frame,'표','표 지우기');
+      if(route==='cut-event')await cutEvent(input);else if(route==='cut-keyboard')await input.press('Control+x');else if(route==='cut-menu')await command(frame,'편집','오려 두기');else if(route==='keyboard')await input.press('Backspace');else await command(frame,'표','표 지우기');
       await page.waitForFunction(()=>{const d=document.querySelector('#status').dataset;return Number(d.changeRevision)>0&&d.changeRevision===d.savedRevision;});
-      await page.reload();await ready(page);await save(page,4);await page.goto(base+'/editor?id='+entry.id+'&result=1');await ready(page);
+      await page.reload();await ready(page);await save(page,4);if(!route.startsWith('cut-')){await page.goto(base+'/editor?id='+entry.id+'&result=1');await ready(page);}
       result=new HwpDocument(await readFile(entry.output));
       try{deletion(source,result,p);assert.equal(digest(await readFile(entry.source)),entry.sourceSha256);const receipt=JSON.parse(await readFile(entry.output+'.receipt.json','utf8'));assert.equal(receipt.contentLoss.count,0);}finally{result.free();}
       pass(entry.format+' '+depth+'-level '+route+' delete/type/undo/recovery/export preserves ancestors');
+      if(route.startsWith('cut-')){
+        await page.bringToFront();
+        await select(page,'BODY-UNCHANGED');await input.press('End');await input.press(process.platform==='darwin'?'Meta+v':'Control+v');
+        await page.waitForFunction(()=>{const d=document.querySelector('#status').dataset;return Number(d.changeRevision)>0&&d.changeRevision===d.savedRevision;});
+        await page.reload();await ready(page);await save(page,5);await page.goto(base+'/editor?id='+entry.id+'&result=1');await ready(page);
+        result=new HwpDocument(await readFile(entry.output));
+        try{
+          const outerHit=JSON.parse(result.searchAllText('OUTER-1',false,true))[0];unchangedAncestors(source,result,p,outerHit.para);const hit=JSON.parse(result.searchAllText('INNER-4',false,true))[0];
+          assert(hit?.cellContext||hit?.cellPath?.length===1,'Pasting the cut table in the body must retain a table, not flattened text');
+          const pastedPath=hit.cellPath??[{controlIndex:hit.cellContext.ctrlIdx,cellIndex:hit.cellContext.cellIdx,cellParaIndex:hit.cellContext.cellPara}];
+          const dimensions=JSON.parse(result.getTableDimensionsByPath(hit.sec,hit.para,pathJson(pastedPath)));
+          assert.deepEqual(dimensions,{rowCount:3,colCount:2,cellCount:6});
+          for(let i=0;i<6;i++){
+            assert.equal(result.getCellPropertiesByPath(hit.sec,hit.para,pathJson(pastedPath),i),source.getCellPropertiesByPath(0,1,pathJson(p),i));
+            const cellPath=[{...pastedPath[0],cellIndex:i}];
+            assert.equal(result.getTextInCellByPath(hit.sec,hit.para,pathJson(cellPath),0,7),'INNER-'+i);
+          }
+          assert.equal(digest(await readFile(entry.source)),entry.sourceSha256);assert.equal(JSON.parse(await readFile(entry.output+'.receipt.json')).contentLoss.count,0);
+        }finally{result.free();}
+        pass(entry.format+' '+depth+'-level '+route+' clipboard survives recovery and pastes a real table');
+      }
       if(route==='keyboard'){nativeChecks({...entry,bytes:inputBytes},p);pass(entry.format+' '+depth+'-level native deletion validates path and preserves rejected bytes');}
     }finally{source.free();await page.close();}
   }

@@ -18,7 +18,8 @@ The full agent-workflow goal and outstanding completion gates are tracked in [ag
 - Attempt a save after 300 ms of idle time or 1000 ms of continued input.
 - Recover using the same source bytes and a matching engine/source fingerprint. Recovery creates a new working-copy ID.
 - Keep separate documents and duplicate tabs independent. This is not collaborative merging.
-- Handle native undo snapshot/fragment IDs during recovery.
+- Remap native undo handles through logical operation IDs when replaying and continuing recovery.
+- Retain the replayed native document and clipboard across reloads instead of reparsing an exported copy.
 - Exclude password-protected documents from plaintext recovery and edited export.
 
 ## Requirements and build

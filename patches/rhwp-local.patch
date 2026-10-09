@@ -233,7 +233,7 @@ index 58162bab6..a8114ff4d 100644
  
    searchAllText(query: string, caseSensitive: boolean, includeCells: boolean = false): import('./types').SearchHit[] {
 diff --git a/rhwp-studio/src/main.ts b/rhwp-studio/src/main.ts
-index 91923c5..aaddd70 100644
+index 91923c5cf..01795a96e 100644
 --- a/rhwp-studio/src/main.ts
 +++ b/rhwp-studio/src/main.ts
 @@ -1,6 +1,7 @@
@@ -256,17 +256,17 @@ index 91923c5..aaddd70 100644
  initThemeSync((effective, mode) => {
    eventBus.emit('theme-changed', { mode, effective });
    eventBus.emit('command-state-changed');
-@@ -156,6 +162,26 @@ async function completeHostSave(fileName?: string): Promise<{ ok: true; wasDirty
+@@ -156,6 +162,30 @@ async function completeHostSave(fileName?: string): Promise<{ ok: true; wasDirty
  (window as any).rhwpStudio = {
    notifySaved: (fileName?: string) => completeHostSave(fileName),
    fonts: { setProvider: setHostFontProvider, getState: getHostFontState },
 +  localRecovery: {
 +    version: 'local-commands-v1:3caa742ed38872301d77eaee631575449711fc5805c45f4b0276d5186315f791',
-+    start: () => {
++    start: (revision = 0) => {
 +      if (!hasHostFontProvider() || window.parent === window || wasm.requiresPasswordForSave) {
 +        throw new Error('이 문서는 변경 기록 자동 저장을 지원하지 않습니다.');
 +      }
-+      wasm.localJournal.start();
++      wasm.localJournal.start(revision);
 +    },
 +    read: (after: number) => wasm.localJournal.read(after),
 +    metrics: () => ({ ...wasm.localJournal.metrics }),
@@ -276,14 +276,18 @@ index 91923c5..aaddd70 100644
 +      const artifact = format === 'hwpx' ? wasm.exportHwpxWithReport() : wasm.exportHwpWithReport();
 +      return { ...artifact, revision: wasm.localJournal.read(Number.MAX_SAFE_INTEGER).revision };
 +    },
-+    replay: (operations: import('./recovery/local-operation-journal').LocalOperation[]) => {
++    replay: async (operations: import('./recovery/local-operation-journal').LocalOperation[]) => {
 +      wasm.replayLocalOperations(operations);
++      prepareCanvasRendererDocument();
++      eventBus.emit('document-swapped');
++      await initializeDocument(wasm.getDocumentInfo(), wasm.fileName, { suppressDialogs: true });
++      return { pageCount: wasm.pageCount, requiresPasswordForSave: wasm.requiresPasswordForSave };
 +    },
 +  },
  };
  
  // E2E 테스트용 전역 노출 (개발 모드 전용)
-@@ -398,6 +424,10 @@ let autosaveStatusRestoreTimer: ReturnType<typeof setTimeout> | null = null;
+@@ -398,6 +428,10 @@ let autosaveStatusRestoreTimer: ReturnType<typeof setTimeout> | null = null;
  let autosavePreviousMessage: string | null = null;
  
  function autosaveScheduleFromUserSettings(): AutosaveScheduleSettings {
@@ -294,7 +298,7 @@ index 91923c5..aaddd70 100644
    const settings = userSettings.getAutosaveSettings();
    return {
      recoveryEnabled: settings.recoveryEnabled,
-@@ -510,7 +540,21 @@ async function initialize(): Promise<void> {
+@@ -510,7 +544,21 @@ async function initialize(): Promise<void> {
        : '웹폰트 로딩 중...';
      await loadWebFonts([], undefined, extensionViewerSettings);  // CSS @font-face 등록 + CRITICAL 폰트만 로드
      msg.textContent = 'WASM 로딩 중...';
@@ -316,7 +320,7 @@ index 91923c5..aaddd70 100644
      if (import.meta.env.DEV) {
        initRhwpDev(wasm);
      }
-@@ -1170,10 +1214,12 @@ function setupEventListeners(): void {
+@@ -1170,10 +1218,12 @@ function setupEventListeners(): void {
  
    eventBus.on('document-mutated', (reason) => {
      documentState.markDirty(typeof reason === 'string' ? reason : 'document-mutated');
@@ -329,7 +333,7 @@ index 91923c5..aaddd70 100644
    });
  
    eventBus.on('renderer-selection-changed', (payload) => {
-@@ -1380,6 +1426,8 @@ async function initializeDocument(
+@@ -1380,6 +1430,8 @@ async function initializeDocument(
      // 저장 snapshot은 권한 prompt 없이 읽을 수 있다. Canvas2D 첫 paint의 family 해소가
      // 이미 승인된 exact local face를 놓치지 않도록 문서 view보다 먼저 준비한다 (#4739).
      await loadStoredLocalFonts();
@@ -338,7 +342,7 @@ index 91923c5..aaddd70 100644
      await updateLoadProgress(75, '문서 상태 적용 중...');
      totalSections = docInfo.sectionCount ?? 1;
      sbSection().textContent = t('ui.sbSection.text', { p1: 1, p2: totalSections });
-@@ -2017,8 +2065,13 @@ installEmbedRuntime({
+@@ -2017,8 +2069,13 @@ installEmbedRuntime({
        if (!await canReplaceCurrentDocument(skipUnsavedGuard)) {
          throw new Error('문서 열기가 취소되었습니다.');
        }
@@ -8111,7 +8115,7 @@ index c6de9bdb5..bd5c15c98 100644
    },
    {
 diff --git a/rhwp-studio/src/engine/input-handler.ts b/rhwp-studio/src/engine/input-handler.ts
-index 043ee77ee..5e62d0b49 100644
+index 043ee77ee..773430814 100644
 --- a/rhwp-studio/src/engine/input-handler.ts
 +++ b/rhwp-studio/src/engine/input-handler.ts
 @@ -19,6 +19,7 @@ import { VirtualScroll } from '@/view/virtual-scroll';
@@ -8142,7 +8146,64 @@ index 043ee77ee..5e62d0b49 100644
    /** 별도 좌표계·개체 선택을 본문 링크 편집으로 오인하지 않도록 명시적으로 차단한다. */
    canEditHyperlink(): boolean {
      return !this.cursor.isInHeaderFooter() && !this.cursor.isInFootnote()
-@@ -5604,18 +5608,7 @@ export class InputHandler {
+@@ -5476,7 +5480,7 @@ export class InputHandler {
+   performRedo(): void { this.handleRedo(); }
+ 
+   /** 복사 (커맨드 시스템용 — 컨텍스트 메뉴/도구 상자에서 호출) */
+-  performCopy(): void {
++  performCopy(): boolean {
+     // 개체 선택 모드 → 직접 클립보드 기록 (textarea 포커스 불필요)
+     if (this.cursor.isInPictureObjectSelection()) {
+       const ref = this.cursor.getSelectedPictureRef();
+@@ -5495,11 +5499,12 @@ export class InputHandler {
+             _keyboard.writeTextHtmlToClipboard(text, markedHtml)
+               .catch(() => navigator.clipboard.writeText(text).catch(() => {}));
+           }
++          return true;
+         } catch (err) {
+           console.warn('[InputHandler] 개체 복사 실패:', err);
+         }
+       }
+-      return;
++      return false;
+     }
+     if (this.cursor.isInTableObjectSelection()) {
+       const ref = this.cursor.getSelectedTableRef();
+@@ -5519,15 +5524,16 @@ export class InputHandler {
+           const markedHtml = _keyboard.prepareRhwpInternalClipboardHtml(this, html, text);
+           _keyboard.writeTextHtmlToClipboard(text, markedHtml)
+             .catch(() => navigator.clipboard.writeText(text).catch(() => {}));
++          return true;
+         } catch (err) {
+           console.warn('[InputHandler] 표 복사 실패:', err);
+         }
+       }
+-      return;
++      return false;
+     }
+     // 텍스트 선택 → textarea 포커스 후 execCommand
+     this.focusTextarea();
+-    document.execCommand('copy');
++    return document.execCommand('copy');
+   }
+ 
+   /** 붙이기 (커맨드 시스템용 — 컨텍스트 메뉴/도구 상자에서 호출) */
+@@ -5568,9 +5574,11 @@ export class InputHandler {
+     if (this.cursor.isInTableObjectSelection()) {
+       const ref = this.cursor.getSelectedTableRef();
+       if (ref) {
+-        // 중첩 표 잘라내기는 지원하지 않는다. keydown 경로도 같은 선택 상태를 유지한다.
+-        if (ref.cellPath && ref.cellPath.length > 1) return;
+-        this.performCopy();
++        if (!this.performCopy()) return;
++        if (ref.cellPath && ref.cellPath.length > 1) {
++          this.deleteCurrentTable('cutTable');
++          return;
++        }
+         this.cursor.moveOutOfSelectedTable();
+         this.eventBus.emit('table-object-selection-changed', false);
+         this.executeOperation({ kind: 'snapshot', operationType: 'cutTable', operation: (wasm: WasmBridge) => {
+@@ -5604,18 +5612,7 @@ export class InputHandler {
      if (this.cursor.isInTableObjectSelection()) {
        const ref = this.cursor.getSelectedTableRef();
        if (!ref) return;
@@ -8162,12 +8223,12 @@ index 043ee77ee..5e62d0b49 100644
        return;
      }
      if (this.cursor.hasSelection()) {
-@@ -5623,6 +5616,44 @@ export class InputHandler {
+@@ -5623,6 +5620,44 @@ export class InputHandler {
      }
    }
  
 +  /** Delete the selected table, then resume in its enclosing paragraph. */
-+  deleteCurrentTable(): void {
++  deleteCurrentTable(operationType = 'deleteTable'): void {
 +    const pos = this.cursor.getPosition();
 +    const ref = this.cursor.getSelectedTableRef();
 +    const sec = ref?.sec ?? pos.sectionIndex;
@@ -8175,7 +8236,7 @@ index 043ee77ee..5e62d0b49 100644
 +    const ci = ref?.ci ?? pos.controlIndex;
 +    if (ppi === undefined || ci === undefined) return;
 +    const path = ref ? ref.cellPath : pos.cellPath;
-+    this.executeOperation({ kind: 'snapshot', operationType: 'deleteTable', operation: (wasm: WasmBridge) => {
++    this.executeOperation({ kind: 'snapshot', operationType, operation: (wasm: WasmBridge) => {
 +      let after: DocumentPosition;
 +      if (path && path.length > 1) {
 +        const host = path.slice(0, -1);
@@ -10444,7 +10505,7 @@ index a553abb60..6afb96e1b 100644
      this.colInput.style.width = '50px';
      this.colInput.min = '1';
 diff --git a/rhwp-studio/src/engine/input-handler-keyboard.ts b/rhwp-studio/src/engine/input-handler-keyboard.ts
-index 7fd48f994..6826d4379 100755
+index 7fd48f994..4aae6caf5 100755
 --- a/rhwp-studio/src/engine/input-handler-keyboard.ts
 +++ b/rhwp-studio/src/engine/input-handler-keyboard.ts
 @@ -197,6 +197,13 @@ function uniqueCellsInReadingOrder(bboxes: CellBbox[]): CellBbox[] {
@@ -10507,6 +10568,52 @@ index 7fd48f994..6826d4379 100755
          if (e.shiftKey) {
            this.cursor.moveToCellPrev();
          } else if (insertRowAfterLastTableCellByTab.call(this)) {
+@@ -1794,9 +1809,33 @@ function copyHeaderFooterSelection(this: any, e: ClipboardEvent): boolean {
+   }
+ }
+ 
++function copySelectedTable(this: any, e: ClipboardEvent): boolean {
++  e.preventDefault();
++  const ref = this.cursor.getSelectedTableRef();
++  if (!ref || !e.clipboardData) return false;
++  try {
++    const target = tableObjectClipboardTarget(ref);
++    this.wasm.copyControl(ref.sec, ref.ppi, target.controlIndex, target.ownerCellPathJson);
++    const text = this.wasm.getClipboardText() || '[표]';
++    let html = '';
++    try { html = this.wasm.exportControlHtml(ref.sec, ref.ppi, target.controlIndex, target.ownerCellPathJson) || ''; } catch { /* The native control remains available without HTML. */ }
++    e.clipboardData.setData('text/plain', text);
++    e.clipboardData.setData('text/html', prepareRhwpInternalClipboardHtml(this, html, text));
++    return true;
++  } catch (err) {
++    console.warn('[InputHandler] 표 복사 실패:', err);
++    return false;
++  }
++}
++
+ export function onCopy(this: any, e: ClipboardEvent): void {
+   if (!this.active) return;
+ 
++  if (this.cursor.isInTableObjectSelection()) {
++    copySelectedTable.call(this, e);
++    return;
++  }
++
+   if (this.cursor.isInHeaderFooter() && this.getNonEmptyHeaderFooterSelection()) {
+     copyHeaderFooterSelection.call(this, e);
+     return;
+@@ -1901,6 +1940,11 @@ export function onCut(this: any, e: ClipboardEvent): void {
+     return;
+   }
+ 
++  if (this.cursor.isInTableObjectSelection()) {
++    if (copySelectedTable.call(this, e)) this.deleteCurrentTable('cutTable');
++    return;
++  }
++
+   if (this.cursor.isInHeaderFooter() && this.getNonEmptyHeaderFooterSelection()) {
+     if (copyHeaderFooterSelection.call(this, e)) this.deleteSelection();
+     return;
 diff --git a/rhwp-studio/index.html b/rhwp-studio/index.html
 index 16f230b54..50af4c287 100644
 --- a/rhwp-studio/index.html

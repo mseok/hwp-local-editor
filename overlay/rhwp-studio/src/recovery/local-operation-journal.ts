@@ -24,6 +24,7 @@ export class LocalOperationJournal {
   private seq = 0;
   private operations: LocalOperation[] = [];
   private blocked: string | null = null;
+  private nativeHandles = new Map<string, number>();
   readonly metrics = { exports: 0, recordedOperations: 0, overheadMs: 0, maxOverheadMs: 0 };
 
   constructor(private readonly changed: () => void) {}
@@ -42,6 +43,16 @@ export class LocalOperationJournal {
           const started = performance.now();
           try { inputs = structuredClone(args); }
           catch { this.blocked = '변경 명령을 기록할 수 없습니다.'; this.changed(); return value.apply(target, args); }
+          const use = handleUses[key];
+          if (use) {
+            const handle = this.nativeHandles.get(`${use}:${inputs[0]}`);
+            if (handle === undefined) {
+              this.blocked = '실행 취소 복구 기록이 누락되었습니다.';
+              this.changed();
+              return value.apply(target, args);
+            }
+            inputs[0] = handle;
+          }
           let result: unknown;
           const cloneMs = performance.now() - started;
           try { result = value.apply(target, args); }
@@ -52,7 +63,10 @@ export class LocalOperationJournal {
           }
           const entry: LocalOperation = { seq: ++this.seq, method: key, args: inputs };
           const finished = performance.now();
-          if (captures[key]) entry.handle = result as number;
+          if (captures[key]) {
+            entry.handle = entry.seq;
+            this.nativeHandles.set(`${captures[key]}:${result}`, entry.handle);
+          }
           this.operations.push(entry);
           this.changed();
           const overhead = cloneMs + performance.now() - finished;
@@ -65,8 +79,12 @@ export class LocalOperationJournal {
     });
   }
 
-  start(): void {
-    this.seq = 0;
+  start(revision = 0): void {
+    if (!Number.isSafeInteger(revision) || revision < 0 || (revision !== 0 && revision !== this.seq)) {
+      throw new Error('재생하지 않은 복구 기록에서 이어 쓸 수 없습니다.');
+    }
+    if (revision === 0) this.nativeHandles.clear();
+    this.seq = revision;
     this.operations = [];
     this.blocked = null;
     Object.assign(this.metrics, { exports: 0, recordedOperations: 0, overheadMs: 0, maxOverheadMs: 0 });
@@ -86,6 +104,8 @@ export class LocalOperationJournal {
   replay(doc: object, operations: LocalOperation[]): void {
     this.enabled = false;
     const handles = new Map<string, number>();
+    this.nativeHandles.clear();
+    this.seq = 0;
     let previous = 0;
     for (const op of operations) {
       if (op.seq !== ++previous || !LOCAL_JOURNAL_METHODS.has(op.method) || !Array.isArray(op.args)) {
@@ -101,7 +121,12 @@ export class LocalOperationJournal {
         args[0] = handle;
       }
       const result = method.apply(doc, args);
-      if (captures[op.method]) handles.set(`${captures[op.method]}:${op.handle}`, result);
+      if (captures[op.method]) {
+        if (op.handle !== op.seq) throw new Error('실행 취소 복구 식별자가 올바르지 않습니다.');
+        handles.set(`${captures[op.method]}:${op.handle}`, result);
+        this.nativeHandles.set(`${captures[op.method]}:${result}`, op.handle);
+      }
+      this.seq = previous;
     }
   }
 }

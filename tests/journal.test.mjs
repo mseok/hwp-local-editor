@@ -36,3 +36,20 @@ test('binary picture payloads are copied before engine call', () => {
   const j=new LocalOperationJournal(()=>{}),doc=j.wrap({insertPictureEx(bytes){bytes[0]=9;}});j.start();
   const bytes=new Uint8Array([1,2]);doc.insertPictureEx(bytes);assert.deepEqual([...j.read(0).operations[0].args[0]],[1,2]);
 });
+test('continued recovery preserves command order and logical handles across repeated replay', () => {
+  const first=new LocalOperationJournal(()=>{}),original=first.wrap(fake(500));first.start();
+  original.insertText(0,0,0,'A');original.saveSnapshot();original.insertText(0,0,1,'B');
+  const prefix=first.read(0).operations;
+  const second=new LocalOperationJournal(()=>{}),native=fake(),continued=second.wrap(native);
+  second.replay(native,prefix);second.start(prefix.length);
+  const snapshot=continued.saveSnapshot();continued.insertText(0,0,2,'C');continued.restoreSnapshot(snapshot);
+  const suffix=second.read(prefix.length).operations;
+  assert.deepEqual(suffix.map(op=>op.seq),[4,5,6]);
+  assert.equal(native.getText(),'AB');
+  const third=new LocalOperationJournal(()=>{}),recovered=fake(900);
+  third.replay(recovered,[...prefix,...suffix]);assert.equal(recovered.getText(),'AB');
+});
+test('journal resume rejects a revision that was not replayed', () => {
+  const journal=new LocalOperationJournal(()=>{});
+  for(const revision of [-1,NaN,1,Number.MAX_SAFE_INTEGER+1])assert.throws(()=>journal.start(revision));
+});

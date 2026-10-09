@@ -183,19 +183,16 @@ try {
       if (!['hwp', 'hwpx'].includes(format)) throw new Error('자동 저장은 HWP/HWPX 형식에 지원됩니다.');
       const workingName = /\.(hwp|hwpx)$/i.test(name) ? name : `${name}.${format}`;
       const protectedNext = result.requiresPasswordForSave === true;
-      let base = data.slice(0);
+      const base = data.slice(0);
+      const recoveredOperations = draft?.engineVersion ? draft.operations ?? [] : [];
       if (draft?.engineVersion && draft.operations?.length) {
-        await recovery.replay(draft.operations);
-        const exported = recovery.export(format);
-        requireLosslessExport(exported.contentLoss, format);
-        base = exported.bytes.slice().buffer;
-        result = await nativeLoadFile(base, name, { skipUnsavedGuard: true });
+        result = await recovery.replay(recoveredOperations);
       }
       fileName = workingName;
       fileFormat = format;
       documentPages = result.pageCount;
       sourceBuffer = base;
-      documentChanged = false;
+      documentChanged = recoveredOperations.length > 0;
       protectedDocument = protectedNext;
       draftId = crypto.randomUUID();
       savedRevision = changeRevision = 0;
@@ -204,7 +201,10 @@ try {
       if (!protectedDocument) {
         try {
           await createJournalDraft(workingName, new Uint8Array(base), recovery.version, draftId, Boolean(draft));
-          recovery.start();
+          if (recoveredOperations.length) {
+            savedRevision = changeRevision = await appendDraftOperations(draftId, 0, recoveredOperations);
+          }
+          recovery.start(changeRevision);
           journalStarted = true;
           history.replaceState(null, '', draftUrl(draftId));
           savedStatus();
@@ -213,8 +213,8 @@ try {
           status.textContent = `자동 저장을 시작할 수 없습니다: ${error.message} 수동 다운로드는 가능합니다.`;
         }
       } else status.textContent = `${name} · ${documentPages}쪽 · 보호 문서 자동 저장 제외`;
-      status.dataset.changeRevision = '0';
-      status.dataset.savedRevision = '0';
+      status.dataset.changeRevision = String(changeRevision);
+      status.dataset.savedRevision = String(savedRevision);
       window.editorReady = true;
       await studio.notifySaved();
       return result;
