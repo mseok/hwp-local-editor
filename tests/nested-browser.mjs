@@ -75,6 +75,29 @@ try{
       assert.equal(JSON.parse(traversal.searchText('중첩',0,0,0,true,true,true)).found,false);
       pass(entry.format+' next/previous search traverses equal-offset nested cells and preserves legacy search scope');
     }finally{traversal.free();}
+    const properties=new HwpDocument(await readFile(entry.source));
+    try{
+      const outerProps=properties.getTableProperties(0,1,0);
+      const outerCells=Array.from({length:4},(_,i)=>properties.getCellProperties(0,1,0,i));
+      assert.throws(()=>properties.setTablePropertiesByPath(0,1,'[]',JSON.stringify({paddingTop:999})));
+      assert.throws(()=>properties.setCellPropertiesByPath(0,1,JSON.stringify([{controlIndex:0,cellIndex:99,cellParaIndex:0},{controlIndex:0,cellIndex:0,cellParaIndex:0}]),0,JSON.stringify({paddingLeft:999})));
+      assert.equal(properties.getTableProperties(0,1,0),outerProps);
+      const before=JSON.parse(properties.getCellPropertiesByPath(0,1,targetPath,0));
+      const border={type:2,width:3,color:'#d02030'};
+      properties.setCellPropertiesByPath(0,1,targetPath,0,JSON.stringify({borderFillId:before.borderFillId,borderLeft:before.borderLeft,borderRight:border}));
+      assert.deepEqual(JSON.parse(properties.getCellPropertiesByPath(0,1,targetPath,0)).borderRight,border);
+      assert.deepEqual(JSON.parse(properties.getCellPropertiesByPath(0,1,targetPath,1)).borderLeft,border);
+      properties.setTablePropertiesByPath(0,1,targetPath,JSON.stringify({hasCaption:true,captionDirection:2,captionSpacing:401}));
+      const reopened=new HwpDocument(entry.format==='hwp'?properties.exportHwp():properties.exportHwpx());
+      try{
+        assert.equal(reopened.getTableProperties(0,1,0),outerProps);
+        for(let i=0;i<4;i++)assert.equal(reopened.getCellProperties(0,1,0,i),outerCells[i]);
+        assert.deepEqual(JSON.parse(reopened.getCellPropertiesByPath(0,1,targetPath,1)).borderLeft,border);
+        const caption=JSON.parse(reopened.getTablePropertiesByPath(0,1,targetPath));
+        assert.equal(caption.hasCaption,true);assert.equal(caption.captionDirection,2);assert.equal(caption.captionSpacing,401);
+        pass(entry.format+' nested properties reject invalid paths; shared border and caption survive export without ancestor changes');
+      }finally{reopened.free();}
+    }finally{properties.free();}
     const page=await context.newPage();await page.goto(base+'/editor?id='+entry.id);await ready(page);
     const frame=page.frameLocator('#editor iframe');
     await select(page,'중첩 수정 대상');
@@ -101,7 +124,56 @@ try{
       pass(entry.format+' nested single replacement survives recovery and preserves outer text/styles');
     }finally{result.free();source.free();}
     await page.goto(base+'/editor?id='+entry.id+'&result=1');await ready(page);await page.getByRole('button',{name:'문서 텍스트 확인',exact:true}).click();await page.locator('#document-text').filter({hasText:'안쪽 셀 수정 완료'}).waitFor();
-    await page.getByText('현재 문서 텍스트',{exact:true}).click();await page.screenshot({path:path.join(root,entry.format+'.png')});await page.close();
+    await page.getByText('현재 문서 텍스트',{exact:true}).click();
+    await select(page,'안쪽 셀 수정 완료');
+    await frame.locator('#menu-bar').getByText('표',{exact:true}).click();
+    await frame.getByText('표/셀 속성',{exact:true}).click();
+    await frame.getByRole('button',{name:'기본',exact:true}).click();
+    const width=frame.getByRole('spinbutton',{name:'표 너비(mm)',exact:true});
+    assert.equal(await width.inputValue(),(14000*25.4/7200).toFixed(1));
+    await width.fill('42');
+    await frame.getByRole('button',{name:'셀',exact:true}).click();
+    await frame.getByRole('checkbox',{name:'셀 안쪽 여백 지정',exact:true}).check();
+    await frame.getByRole('spinbutton',{name:'셀 안쪽 왼쪽 여백(mm)',exact:true}).fill('1.7');
+    await frame.getByRole('button',{name:'표',exact:true}).click();
+    await frame.getByRole('spinbutton',{name:'표 안쪽 위쪽 여백(mm)',exact:true}).fill('1.2');
+    await frame.getByRole('button',{name:'확인',exact:true}).click();
+    await frame.locator('#menu-bar').getByText('편집',{exact:true}).click();
+    await frame.getByText('되돌리기',{exact:true}).click();
+    await frame.locator('#menu-bar').getByText('표',{exact:true}).click();
+    await frame.getByText('표/셀 속성',{exact:true}).click();
+    await frame.getByRole('button',{name:'기본',exact:true}).click();
+    assert.equal(await width.inputValue(),(14000*25.4/7200).toFixed(1));
+    await frame.getByRole('button',{name:'취소',exact:true}).click();
+    await frame.locator('#menu-bar').getByText('편집',{exact:true}).click();
+    await frame.getByText('다시 실행',{exact:true}).click();
+    await frame.locator('#menu-bar').getByText('표',{exact:true}).click();
+    await frame.getByText('표/셀 속성',{exact:true}).click();
+    await frame.getByRole('button',{name:'기본',exact:true}).click();
+    assert.equal(await width.inputValue(),'42.0');
+    await frame.getByRole('button',{name:'취소',exact:true}).click();
+    await page.waitForFunction(()=>{
+      const {changeRevision,savedRevision}=document.querySelector('#status').dataset;
+      return Number(changeRevision)>0&&changeRevision===savedRevision;
+    });
+    await page.reload();await ready(page);await save(page,3);
+    const before=new HwpDocument(await readFile(entry.source));result=new HwpDocument(await readFile(entry.output));
+    try{
+      assert.equal(result.getTableProperties(0,1,0),before.getTableProperties(0,1,0));
+      for(let cell=0;cell<4;cell++)assert.equal(result.getCellProperties(0,1,0,cell),before.getCellProperties(0,1,0,cell));
+      const innerProps=JSON.parse(result.getTablePropertiesByPath(0,1,targetPath));
+      assert.ok(Math.abs(innerProps.tableWidth*25.4/7200-42)<0.01);
+      assert.equal(innerProps.paddingTop,Math.round(1.2*7200/25.4));
+      const target=JSON.parse(result.getCellPropertiesByPath(0,1,targetPath,1));
+      assert.equal(target.applyInnerMargin,true);assert.equal(target.paddingLeft,Math.round(1.7*7200/25.4));
+      const unchangedCell=props=>{const {width,height,...rest}=JSON.parse(props);return rest;};
+      assert.deepEqual(unchangedCell(result.getCellPropertiesByPath(0,1,targetPath,0)),unchangedCell(before.getCellPropertiesByPath(0,1,targetPath,0)));
+      assert.equal(JSON.parse(result.getCellCharPropertiesAtByPath(0,1,targetPath,0)).fontSize,1200);
+      assert.equal(digest(await readFile(entry.source)),entry.sourceSha256);
+      pass(entry.format+' nested table width and cell/table margins survive journal recovery without ancestor changes');
+    }finally{before.free();result.free();}
+    await page.goto(base+'/editor?id='+entry.id+'&result=1');await ready(page);
+    await page.screenshot({path:path.join(root,entry.format+'.png')});await page.close();
   }
   assert.deepEqual(report.errors,[]);assert.deepEqual(report.warnings,[]);assert.deepEqual(report.externalRequests,[]);pass('no browser errors, warnings or external requests');
 }finally{
