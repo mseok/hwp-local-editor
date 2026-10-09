@@ -7,7 +7,7 @@ description: Edit user-provided HWP or HWPX files through the local HWP Local Ed
 
 Use the user's files and edit instructions. Keep foreground focus unchanged. Do not open native Hancom routinely or require the user to operate the editor.
 
-Find the HWP Local Editor checkout in `repository.txt` alongside the installed skill. When reading the repository's own skill, the checkout is two directories above this folder. Build only when `.build/studio`, `.build/core`, or `.build/sdk` is absent. Run from the checkout:
+Find the HWP Local Editor checkout in `repository.txt` alongside the installed skill. When reading the repository's own skill, the checkout is two directories above this folder. Run `node scripts/check-build.mjs` first. Build with `npm run build` when it reports a missing or stale build; directory existence alone does not prove compatibility after an update. If the builder reports a changed managed patch cache, preserve the old `.cache/rhwp` directory by moving it aside before rebuilding. Do not delete user files or unrelated caches. Run from the checkout:
 
 ```sh
 node scripts/open.mjs --output OUTPUT_DIRECTORY --port AVAILABLE_PORT FILE.hwp FILE.hwpx

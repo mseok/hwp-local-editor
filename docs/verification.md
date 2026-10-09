@@ -31,11 +31,13 @@ The portable task skill was installed for local Codex and Claude Code. Codex com
 
 Verified on 2026-10-09 after connecting the transaction-owned export report to the local host. The host rejects nonzero or malformed preservation reports before publishing results, downloads or preview snapshots. The server also reparses the result and checks the reopened model's export report. These checks use the report accompanying the exported bytes, not a separate client export.
 
-Ten unit/server checks, eight recovery/download browser checks, nine multi-file browser checks and eight complex-document browser checks passed. The complex synthetic fixtures contain 90 body paragraphs across three pages, a generated PNG, an equation, a footnote, a header and a table inside another table. Browser find/replace changes all three requested occurrences in body and both table levels. Saved HWP and HWPX outputs preserve the extracted text outside those replacements, image payload hashes, queried object properties, page count and unchanged source hashes; results reopen and preview successfully.
+Eleven unit/server checks, eight recovery/download browser checks, nine multi-file browser checks and eight complex-document browser checks passed. The complex synthetic fixtures contain 90 body paragraphs across three pages, a generated PNG, an equation, a footnote, a header and a table inside another table. Browser find/replace changes all three requested occurrences in body and both table levels. Saved HWP and HWPX outputs preserve the extracted text outside those replacements, image payload hashes, queried object properties, page count and unchanged source hashes; results reopen and preview successfully.
 
 A deliberately missing image payload produces a real engine loss report. Result saving, manual download and preview snapshot creation all reject it. The original and persisted command journal remain intact. Failure notices remain visible even after a pending journal acknowledgement updates the autosave status. This does not claim that recovery of a damaged source can always be reopened into the editor.
 
 Actual Codex in-app browser computer use additionally reopened the complex HWPX result, changed three occurrences across body/nested tables, saved revision 2 and reopened the file to confirm them. No native Hancom window was opened. A zero-loss report is not a universal loss detector: unsupported controls or attributes may be outside the engine's reporting coverage. Native Hancom layout and untested objects remain separate compatibility gates.
+
+The launcher and server check build metadata against the current public patch, overlay and upstream pin before opening a task. Missing engine files, changed patches and a different upstream pin are rejected. A fresh build records its source version only after all engine/Studio/SDK outputs are copied. This avoids current host controls silently running with an older built engine after an update.
 
 ## Re-run
 

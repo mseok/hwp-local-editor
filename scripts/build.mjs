@@ -1,8 +1,9 @@
 import {execFileSync} from 'node:child_process';
-import {readFile,writeFile,mkdir,cp,access,readdir} from 'node:fs/promises';
+import {readFile,writeFile,mkdir,cp,access} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {sourceVersion as computeSourceVersion} from './check-build.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const pin=JSON.parse(await readFile(path.join(root,'upstream.json'),'utf8'));
 const upstream=path.join(root,'.cache/rhwp');
@@ -15,11 +16,7 @@ try{await access(path.join(upstream,'.git'));}catch{
 }
 const head=execFileSync('git',['rev-parse','HEAD'],{cwd:upstream,encoding:'utf8'}).trim();
 if(head!==pin.commit) throw new Error('Cached upstream revision differs. Move .cache/rhwp aside and rebuild.');
-const hash=createHash('sha256');
-const patch=await readFile(path.join(root,'patches/rhwp-local.patch'));hash.update(patch);
-async function hashOverlay(dir){for(const entry of (await readdir(dir,{withFileTypes:true})).sort((a,b)=>a.name.localeCompare(b.name))){const p=path.join(dir,entry.name);hash.update(path.relative(root,p));if(entry.isDirectory())await hashOverlay(p);else hash.update(await readFile(p));}}
-await hashOverlay(path.join(root,'overlay'));
-const sourceVersion=hash.digest('hex');
+const sourceVersion=await computeSourceVersion(root);
 let applied='';try{applied=await readFile(path.join(upstream,'.local-editor-patch'),'utf8');}catch{}
 if(applied!==sourceVersion){
   if(applied) throw new Error('Patch changed. Move .cache/rhwp aside before rebuilding.');
@@ -49,4 +46,5 @@ await mkdir(path.join(root,'.build'),{recursive:true});
 await cp(path.join(upstream,'rhwp-studio/dist'),path.join(root,'.build/studio'),{recursive:true});
 await cp(path.join(upstream,'pkg'),path.join(root,'.build/core'),{recursive:true});
 await cp(path.join(upstream,'npm/editor'),path.join(root,'.build/sdk'),{recursive:true});
+await writeFile(path.join(root,'.build/build-info.json'),JSON.stringify({schemaVersion:1,sourceVersion,upstreamCommit:pin.commit,wasmBindgen:pin.wasmBindgen}));
 console.log('Build complete. Run npm start.');

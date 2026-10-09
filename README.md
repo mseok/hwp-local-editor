@@ -35,6 +35,8 @@ Open http://127.0.0.1:8766/editor. The build fetches a pinned public upstream re
 
 The build cache is ignored. If patches change, move .cache/rhwp aside before rebuilding. CARGO_BIN, WASM_BINDGEN_BIN and CARGO_TARGET_DIR can use an existing toolchain/cache.
 
+Run `node scripts/check-build.mjs` after updating the repository. The task launcher and server reject missing or stale builds instead of mixing current controls with an older engine. Rebuild when this check fails, preserving an older managed cache rather than deleting it.
+
 ## Automatic document editing through an agent
 
 After building, install the task skill for local Codex and Claude Code:
