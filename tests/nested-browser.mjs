@@ -14,17 +14,29 @@ const root=await mkdtemp(path.resolve('test-results/nested-'));
 initSync({module:await readFile('.build/core/rhwp_bg.wasm')});
 const blank=await readFile('.cache/rhwp/saved/blank2010.hwp');
 const outer=new HwpDocument(blank),inner=new HwpDocument(blank);
-let bytes;
+let bytes,innerTable;
 try{
   outer.createBlankDocument();outer.insertText(0,0,0,'보존할 본문');outer.splitParagraph(0,0,7);outer.createTable(0,1,0,2,2);
   for(const [i,text] of ['바깥 셀 A','바깥 셀 B','바깥 셀 C','바깥 셀 D'].entries())outer.insertTextInCell(0,1,0,i,0,0,text);
   inner.createBlankDocument();const created=JSON.parse(inner.createTableEx(JSON.stringify({sectionIdx:0,paraIdx:0,charOffset:0,rowCount:1,colCount:2,treatAsChar:true,colWidths:[7000,7000]})));
   inner.insertTextInCell(0,0,created.controlIdx,0,0,0,'중첩 셀 보존');inner.insertTextInCell(0,0,created.controlIdx,1,0,0,'중첩 수정 대상');
   const entries=unzip(Buffer.from(outer.exportHwpx()));
-  const innerTable=unzip(Buffer.from(inner.exportHwpx())).get('Contents/section0.xml').toString().match(/<hp:tbl\b[\s\S]*?<\/hp:tbl>/)[0].replace(/\bid="\d+"/g,match=>`id="${1000+Number(match.match(/\d+/)[0])}"`);
+  innerTable=unzip(Buffer.from(inner.exportHwpx())).get('Contents/section0.xml').toString().match(/<hp:tbl\b[\s\S]*?<\/hp:tbl>/)[0].replace(/\bid="\d+"/g,match=>`id="${1000+Number(match.match(/\d+/)[0])}"`);
   const section=entries.get('Contents/section0.xml').toString();assert.ok(section.includes('<hp:t>바깥 셀 A</hp:t>'));
   entries.set('Contents/section0.xml',Buffer.from(section.replace('<hp:t>바깥 셀 A</hp:t>',innerTable+'<hp:t>바깥 셀 A</hp:t>')));bytes=zip(entries);
 }finally{outer.free();inner.free();}
+const merged=new HwpDocument(blank),middle=new HwpDocument(blank);
+let mergedBytes,flatMergedBytes,mergedControl;
+try{
+  merged.createBlankDocument();mergedControl=JSON.parse(merged.createTableEx(JSON.stringify({sectionIdx:0,paraIdx:0,charOffset:0,rowCount:3,colCount:3,treatAsChar:true,colWidths:[4000,4000,4000]}))).controlIdx;
+  for(let cell=0;cell<9;cell++)merged.insertTextInCell(0,0,mergedControl,cell,0,0,'병합 자료'+cell);
+  merged.mergeTableCells(0,0,mergedControl,0,0,1,1);flatMergedBytes=merged.exportHwpx();
+  const mergedTable=unzip(Buffer.from(flatMergedBytes)).get('Contents/section0.xml').toString().match(/<hp:tbl\b[\s\S]*?<\/hp:tbl>/)[0];
+  middle.createBlankDocument();const middleControl=JSON.parse(middle.createTableEx(JSON.stringify({sectionIdx:0,paraIdx:0,charOffset:0,rowCount:1,colCount:1,treatAsChar:true,colWidths:[16000]}))).controlIdx;middle.insertTextInCell(0,0,middleControl,0,0,0,'중간 표 보존');
+  const middleXml=unzip(Buffer.from(middle.exportHwpx())).get('Contents/section0.xml').toString().match(/<hp:tbl\b[\s\S]*?<\/hp:tbl>/)[0];
+  const entries=unzip(bytes),section=entries.get('Contents/section0.xml').toString();
+  entries.set('Contents/section0.xml',Buffer.from(section.replace(innerTable,middleXml.replace('<hp:t>중간 표 보존</hp:t>',mergedTable+'<hp:t>중간 표 보존</hp:t>'))));mergedBytes=zip(entries);
+}finally{merged.free();middle.free();}
 const files=[];
 for(const format of ['hwp','hwpx']){
   const document=new HwpDocument(bytes);
@@ -51,6 +63,18 @@ async function select(page,text){
   await frame.getByRole('button',{name:'찾아 바꾸기 닫기',exact:true}).click();
 }
 async function save(page,revision){await page.getByRole('button',{name:'결과 파일 저장',exact:true}).click();await page.locator(`#delivery[data-revision="${revision}"]`).waitFor();}
+function assertOuterTextFits(document){
+  const outer=JSON.parse(document.getTableCellBboxes(0,1,0))[0];
+  const glyph=[...document.renderPageSvg(0).matchAll(/<text\b([^>]*)>([^<]*)<\/text>/g)].find(match=>match[2]==='A');
+  assert.ok(glyph,'Outer-cell label A remains rendered');
+  const x=Number(glyph[1].match(/\bx="([^"]+)"/)[1]);
+  const y=Number(glyph[1].match(/\by="([^"]+)"/)[1]);
+  assert.ok(x>=outer.x&&x<outer.x+outer.w,'Outer-cell text must wrap inside its own cell after the inner table grows');
+  assert.ok(y>outer.y&&y<=outer.y+outer.h,'Outer-cell text must stay inside its vertical cell bounds');
+  const inner=JSON.parse(document.getTableCellBboxesByPath(0,1,targetPath));
+  assert.ok(inner.every(cell=>cell.x>=outer.x&&cell.x+cell.w<=outer.x+outer.w+0.2&&cell.y>=outer.y&&cell.y+cell.h<=outer.y+outer.h+0.2),'Expanded inner table must remain inside its outer cell');
+  assert.ok(!inner.some(cell=>x>=cell.x&&x<cell.x+cell.w&&y>cell.y&&y<cell.y+cell.h),'Outer-cell text must not overlap the expanded inner table');
+}
 function preserved(source,result){
   assert.equal(result.getTableProperties(0,1,0),source.getTableProperties(0,1,0));
   assert.equal(result.getTableDimensionsByPath(0,1,targetPath),source.getTableDimensionsByPath(0,1,targetPath));
@@ -98,6 +122,50 @@ try{
         pass(entry.format+' nested properties reject invalid paths; shared border and caption survive export without ancestor changes');
       }finally{reopened.free();}
     }finally{properties.free();}
+    const structure=new HwpDocument(await readFile(entry.source));
+    try{
+      const before=Buffer.from(entry.format==='hwp'?structure.exportHwp():structure.exportHwpx());
+      const badPath=JSON.stringify([{controlIndex:0,cellIndex:99,cellParaIndex:0},{controlIndex:0,cellIndex:0,cellParaIndex:0}]);
+      assert.throws(()=>structure.insertTableRowByPath(0,1,'[]',0,true));
+      assert.throws(()=>structure.insertTableColumnByPath(0,1,badPath,0,true));
+      assert.throws(()=>structure.insertTableRowByPath(0,1,targetPath,65536,true));
+      assert.throws(()=>structure.insertTableColumnByPath(0,1,targetPath,2,true));
+      assert.throws(()=>structure.deleteTableRowByPath(0,1,targetPath,0));
+      assert.throws(()=>structure.deleteTableColumnByPath(0,1,targetPath,2));
+      assert.deepEqual(Buffer.from(entry.format==='hwp'?structure.exportHwp():structure.exportHwpx()),before);
+      pass(entry.format+' invalid structural paths/indexes and last-row deletion leave export bytes unchanged');
+    }finally{structure.free();}
+    const nestedMerged=new HwpDocument(mergedBytes),flatMerged=new HwpDocument(flatMergedBytes);
+    const mergedPath=[{controlIndex:0,cellIndex:0,cellParaIndex:0},{controlIndex:0,cellIndex:0,cellParaIndex:0},{controlIndex:0,cellIndex:0,cellParaIndex:0}];
+    const mergedJson=JSON.stringify(mergedPath),middlePath=JSON.stringify(mergedPath.slice(0,2));
+    try{
+      const ancestor=nestedMerged.getTableProperties(0,1,0),parent=nestedMerged.getTablePropertiesByPath(0,1,middlePath);
+      const actions=[['insertTableRow',0,true],['insertTableColumn',0,true],['deleteTableRow',1],['deleteTableColumn',1],['deleteTableRow',0],['deleteTableColumn',0],['insertTableRow',1,true],['insertTableColumn',1,true]];
+      for(const [index,[method,coordinate,direction]] of actions.entries()){
+        nestedMerged[method+'ByPath'](0,1,mergedJson,coordinate,...(direction===undefined?[]:[direction]));
+        flatMerged[method](0,0,mergedControl,coordinate,...(direction===undefined?[]:[direction]));
+        if(index===1)assert.deepEqual(JSON.parse(nestedMerged.getCellInfoByPath(0,1,mergedJson)),{row:0,col:0,rowSpan:3,colSpan:3});
+        assert.equal(nestedMerged.getTableProperties(0,1,0),ancestor);assert.equal(nestedMerged.getTablePropertiesByPath(0,1,middlePath),parent);
+      }
+      const reopened=new HwpDocument(entry.format==='hwp'?nestedMerged.exportHwp():nestedMerged.exportHwpx());
+      const flatReopened=new HwpDocument(entry.format==='hwp'?flatMerged.exportHwp():flatMerged.exportHwpx());
+      try{
+        assert.equal(reopened.getTablePropertiesByPath(0,1,mergedJson),flatReopened.getTableProperties(0,0,mergedControl));
+        const dims=JSON.parse(reopened.getTableDimensionsByPath(0,1,mergedJson));assert.deepEqual(dims,JSON.parse(flatReopened.getTableDimensions(0,0,mergedControl)));
+        for(let cell=0;cell<dims.cellCount;cell++){
+          const p=structuredClone(mergedPath);p.at(-1).cellIndex=cell;
+          assert.equal(reopened.getCellInfoByPath(0,1,JSON.stringify(p)),flatReopened.getCellInfo(0,0,mergedControl,cell));
+          assert.equal(reopened.getCellPropertiesByPath(0,1,mergedJson,cell),flatReopened.getCellProperties(0,0,mergedControl,cell));
+        }
+        const text=JSON.parse(reopened.getTextFileUnicode());assert.ok(text.includes('중간 표 보존'));
+        for(const value of ['바깥 셀 A','바깥 셀 B','바깥 셀 C','바깥 셀 D'])assert.ok(text.includes(value));
+        assert.deepEqual(text.match(/병합 자료\d+/g).sort(),JSON.parse(flatReopened.getTextFileUnicode()).match(/병합 자료\d+/g).sort());
+        const events=JSON.parse(nestedMerged.getEventLog()).events.filter(event=>event.type==='TableStructureChangedByPath');
+        assert.equal(events.length,actions.length);for(const event of events){assert.deepEqual(event.cellPath,mergedPath);assert.equal(event.para,1);}
+        assert.ok(JSON.parse(flatMerged.getEventLog()).events.some(event=>event.type==='TableRowInserted'));
+        pass(entry.format+' three-level merged-table row/column operations match flat reference after export with path-aware events');
+      }finally{reopened.free();flatReopened.free();}
+    }finally{nestedMerged.free();flatMerged.free();}
     const page=await context.newPage();await page.goto(base+'/editor?id='+entry.id);await ready(page);
     const frame=page.frameLocator('#editor iframe');
     await select(page,'중첩 수정 대상');
@@ -173,7 +241,55 @@ try{
       pass(entry.format+' nested table width and cell/table margins survive journal recovery without ancestor changes');
     }finally{before.free();result.free();}
     await page.goto(base+'/editor?id='+entry.id+'&result=1');await ready(page);
-    await page.screenshot({path:path.join(root,entry.format+'.png')});await page.close();
+    await page.screenshot({path:path.join(root,entry.format+'.png')});
+    await select(page,'안쪽 셀 수정 완료');
+    await frame.locator('#menu-bar').getByText('표',{exact:true}).click();
+    await frame.getByText('줄/칸 추가하기(I)...',{exact:true}).click();
+    await frame.getByRole('radio',{name:'위쪽에 줄 추가하기',exact:true}).check();
+    await frame.getByRole('button',{name:'추가',exact:true}).click();
+    await frame.locator('#menu-bar').getByText('표',{exact:true}).click();
+    await frame.getByText('줄/칸 추가하기(I)...',{exact:true}).click();
+    await frame.getByRole('radio',{name:'왼쪽에 칸 추가하기',exact:true}).check();
+    await frame.getByRole('button',{name:'추가',exact:true}).click();await save(page,4);
+    const original=new HwpDocument(await readFile(entry.source));result=new HwpDocument(await readFile(entry.output));
+    try{
+      assert.equal(result.getTableProperties(0,1,0),original.getTableProperties(0,1,0));
+      assert.deepEqual(JSON.parse(result.getTableDimensionsByPath(0,1,targetPath)),{rowCount:2,colCount:3,cellCount:6});
+      assert.equal(JSON.parse(result.getTextFileUnicode()).split('\r\n').filter(Boolean).join('\n'),JSON.parse(original.getTextFileUnicode()).replace('중첩 수정 대상','안쪽 셀 수정 완료').split('\r\n').filter(Boolean).join('\n'));
+      const shifted=JSON.parse(targetPath);shifted.at(-1).cellIndex=5;
+      assert.equal(JSON.parse(result.getCellCharPropertiesAtByPath(0,1,JSON.stringify(shifted),0)).fontSize,1200);
+      assertOuterTextFits(result);
+      pass(entry.format+' consecutive inner row/column insertion retains cursor scope, wraps outer text and preserves outer table');
+    }finally{result.free();}
+    await page.goto(base+'/editor?id='+entry.id+'&result=1');await ready(page);await select(page,'안쪽 셀 수정 완료');
+    await frame.locator('#menu-bar').getByText('표',{exact:true}).click();
+    await frame.getByText('줄/칸 지우기(E)...',{exact:true}).click();
+    await frame.getByRole('radio',{name:'칸',exact:true}).check();await frame.getByRole('button',{name:'지우기',exact:true}).click();
+    // The target was the final cell. The next deletion must stay in this inner table.
+    await frame.locator('#menu-bar').getByText('표',{exact:true}).click();
+    await frame.getByText('줄/칸 지우기(E)...',{exact:true}).click();
+    await frame.getByRole('radio',{name:'줄',exact:true}).check();await frame.getByRole('button',{name:'지우기',exact:true}).click();await save(page,5);
+    result=new HwpDocument(await readFile(entry.output));
+    try{
+      assert.equal(result.getTableProperties(0,1,0),original.getTableProperties(0,1,0));
+      const text=JSON.parse(result.getTextFileUnicode());for(const value of ['바깥 셀 A','바깥 셀 B','바깥 셀 C','바깥 셀 D'])assert.ok(text.includes(value));
+      assert.ok(!text.includes('중첩 셀 보존'));assert.ok(!text.includes('안쪽 셀 수정 완료'));
+      assert.deepEqual(JSON.parse(result.getTableDimensionsByPath(0,1,targetPath)),{rowCount:1,colCount:2,cellCount:2});
+    }finally{result.free();}
+    const beforeUndo=await page.locator('#status').getAttribute('data-change-revision');
+    await frame.locator('#menu-bar').getByText('편집',{exact:true}).click();await frame.getByText('되돌리기',{exact:true}).click();
+    await page.waitForFunction(previous=>{const d=document.querySelector('#status').dataset;return Number(d.changeRevision)>Number(previous)&&d.changeRevision===d.savedRevision;},beforeUndo);
+    await page.getByRole('button',{name:'문서 텍스트 확인',exact:true}).click();await page.locator('#document-text').filter({hasText:'중첩 셀 보존'}).waitFor();
+    await page.reload();await ready(page);await save(page,6);
+    result=new HwpDocument(await readFile(entry.output));
+    try{
+      assert.equal(result.getTableProperties(0,1,0),original.getTableProperties(0,1,0));
+      const text=JSON.parse(result.getTextFileUnicode());assert.ok(text.includes('중첩 셀 보존'));assert.ok(!text.includes('안쪽 셀 수정 완료'));
+      assert.deepEqual(JSON.parse(result.getTableDimensionsByPath(0,1,targetPath)),{rowCount:2,colCount:2,cellCount:4});
+      assert.equal(digest(await readFile(entry.source)),entry.sourceSha256);
+      pass(entry.format+' inner row/column deletion clamps the cursor; undo/recovery preserves ancestor text');
+    }finally{original.free();result.free();}
+    await page.close();
   }
   assert.deepEqual(report.errors,[]);assert.deepEqual(report.warnings,[]);assert.deepEqual(report.externalRequests,[]);pass('no browser errors, warnings or external requests');
 }finally{
