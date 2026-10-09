@@ -50,7 +50,7 @@ After building, install the task skill for local Codex and Claude Code:
 node scripts/install-skill.mjs
 ```
 
-Use `--codex-only` to install only for Codex. This installs instructions and a local repository pointer, not an LLM service or credentials. A new session/reload may be needed for skill discovery. The installed skill explains how to handle files, edit through browser computer use, verify outputs and return file links. Claude must have its own working browser/computer-use tools; its execution has not been tested here.
+Use `--codex-only` to install only for Codex. This installs instructions and a local repository pointer, not an LLM service or credentials. A new session/reload may be needed for skill discovery. The installed skill explains how to handle files, edit through browser computer use, verify outputs and return file links. Actual Codex hidden-browser and Claude headless-browser editing have both been exercised with synthetic files. Claude needs browser tools in its session; the optional [headless Claude setup](docs/claude-browser.md) keeps the personal browser and foreground untouched.
 
 Give the agent the files and the edits to make. It starts a task workspace using:
 

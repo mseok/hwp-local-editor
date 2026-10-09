@@ -23,5 +23,10 @@ test('server exposes only allowlisted loopback resources',async()=>{
     assert.equal((await call('/.git/config')).status,404);
     assert.equal((await call('/document/private/source')).status,404);
     assert.ok([403,404].includes((await call('/rhwp/%2e%2e%2f%2e%2e%2fpackage.json')).status));
-  }finally{child.kill();await new Promise(resolve=>child.once('close',resolve));}
+  }finally{
+    if(child.exitCode===null&&child.signalCode===null){
+      const closed=new Promise(resolve=>child.once('close',resolve));
+      child.kill();await closed;
+    }
+  }
 });
