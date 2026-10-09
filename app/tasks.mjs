@@ -13,7 +13,7 @@ async function refresh() {
       const link = (text,href) => { const anchor = document.createElement('a'); anchor.textContent=text;anchor.href=href;anchor.target='_blank';anchor.rel='noopener';return anchor; };
       nav.append(link('원본에서 편집',`/editor?id=${doc.id}`));
       if (doc.receipt) nav.append(link('저장 결과 다시 열기',`/editor?id=${doc.id}&result=1`),link('결과 미리보기',`/?document=${doc.id}&result=1`),link('결과 다운로드',`/document/${doc.id}/result`));
-      const receipt = document.createElement('p');receipt.className='receipt';receipt.textContent=doc.receipt ? `${doc.receipt.name}\n${doc.receipt.path}\n검증: 엔진 재열기, 텍스트·형식 일치` : '';
+      const receipt = document.createElement('p');receipt.className='receipt';receipt.textContent=doc.receipt ? `${doc.receipt.name}\n${doc.receipt.path}\n검증: 엔진 재열기, 텍스트·형식 일치${doc.receipt.contentLoss?.count===0?', 보고된 내용 손실 0건':''}` : '';
       article.append(title,state,nav,receipt);return article;
     }));
     status.textContent = documents.length ? `${documents.length}개 문서 · ${documents.filter(d=>d.receipt).length}개 결과 저장됨` : '등록된 파일이 없습니다. scripts/open.mjs로 파일을 등록하거나 편집기에서 파일을 선택하세요.';

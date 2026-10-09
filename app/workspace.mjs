@@ -1,6 +1,7 @@
 import {readFile, realpath, mkdir, open, rename, unlink, lstat, link} from 'node:fs/promises';
 import path from 'node:path';
 import {createHash, randomUUID} from 'node:crypto';
+import {requireLosslessExport} from './export-check.mjs';
 
 export const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const failure = (status, message) => Object.assign(new Error(message), {status});
@@ -74,7 +75,7 @@ export async function loadWorkspace(manifest, inspect) {
       if (digest(bytes) !== entry.receipt.outputSha256) throw failure(409,'Saved output changed outside this workspace.');
       return {bytes,name:path.basename(entry.output)};
     },
-    save: async (id,bytes,expectedRevision,expectedTextSha256) => {
+    save: async (id,bytes,expectedRevision,expectedTextSha256,contentLoss) => {
       const entry = record(id);
       const task = entry.queue.catch(()=>{}).then(async () => {
         if (expectedRevision !== entry.revision) throw failure(409,'Another window saved this document. Reopen its result before saving.');
@@ -82,13 +83,15 @@ export async function loadWorkspace(manifest, inspect) {
         await sourceBytes(entry);
         const checked = await inspect(bytes);
         if (checked.format !== entry.format || checked.textSha256 !== expectedTextSha256) throw failure(422,'Export did not preserve the current document text or source format.');
+        try { requireLosslessExport(contentLoss,entry.format);requireLosslessExport(checked.contentLoss,entry.format); }
+        catch (error) { throw failure(422,error.message); }
         if (await realpath(directory) !== directory) throw failure(409,'Output directory changed.');
         // Each session owns its outputs; never replace a foreign file or follow a symlink.
         try {
           const stat = await lstat(entry.output);
           if (!entry.receipt || !stat.isFile() || stat.isSymbolicLink() || digest(await readFile(entry.output)) !== entry.receipt.outputSha256) throw failure(409,'Output is not owned by this session.');
         } catch (error) { if (error.code !== 'ENOENT') throw error; }
-        const receipt = {id,revision:entry.revision+1,name:path.basename(entry.output),path:entry.output,sourceSha256:entry.sourceSha256,outputSha256:digest(bytes),textSha256:checked.textSha256,pageCount:checked.pageCount,validation:'engine-reopen-text-and-format',savedAt:new Date().toISOString()};
+        const receipt = {id,revision:entry.revision+1,name:path.basename(entry.output),path:entry.output,sourceSha256:entry.sourceSha256,outputSha256:digest(bytes),textSha256:checked.textSha256,pageCount:checked.pageCount,contentLoss,validation:'engine-reopen-text-format-and-reported-content-loss',savedAt:new Date().toISOString()};
         const temporary = path.join(directory,`.${entry.id}-${randomUUID()}.tmp`);
         try {
           const handle = await open(temporary,'wx',0o600);

@@ -9,7 +9,8 @@ This repository contains the local shell and source patches against rhwp v0.8.7.
 - Open HWP/HWPX files in a browser or an embedded local browser panel.
 - Register several local files once, then open each through its browser link without automating file uploads.
 - Let an agent inspect accessible body/table text, operate find/replace or rich editing controls, and save results into a designated local folder.
-- Reopen exported results and check text and source format before publication; reject stale duplicate-tab saves.
+- Reopen exported results and check text, source format and reported content losses before publication; reject stale duplicate-tab saves.
+- Block exports with reported data loss before delivering a result, download or preview snapshot. Keep the original and edit journal.
 - Edit, preview and explicitly download a working copy. The original file is never overwritten.
 - Record successful editing commands in IndexedDB rather than repeatedly exporting the full document while typing.
 - Attempt a save after 300 ms of idle time or 1000 ms of continued input.
@@ -54,7 +55,7 @@ The command prints the manifest, output directory and `/tasks` URL, then runs th
 
 The agent opens the task list in a background browser, edits separate tabs, clicks **결과 파일 저장**, inspects the result and returns the files. The source is never overwritten. The output folder receives editable HWP/HWPX files plus per-file `.receipt.json` records. To resume after stopping the owned server, start it with the saved `DOCUMENT_MANIFEST` and the same `PORT`.
 
-Natural-language planning stays with Codex/Claude; this app supplies editing controls and file handling. It does not call a model automatically or run an agent without a browser tool. Validation checks engine reopening, text and format; it does not certify native Hancom layout or every special object.
+Natural-language planning stays with Codex/Claude; this app supplies editing controls and file handling. It does not call a model automatically or run an agent without a browser tool. Validation checks engine reopening, text, format and reported export losses. A zero-loss report does not certify native Hancom layout or every special object; some unsupported properties may not be reported by the engine.
 
 ## Fonts and layout
 
@@ -70,7 +71,7 @@ Font files are read only from this explicitly configured list and served only ov
 
 ## Persistence and privacy
 
-Working copies and command logs remain in this browser profile's IndexedDB. With `scripts/open.mjs`, registered sources are read from disk and explicitly saved results/receipts are written only to the selected output directory. The save endpoint validates the same-origin request, document identity, revision, text fingerprint and source format. There is no cloud sync or analytics. The server listens only on 127.0.0.1 and validates the Host header. Do not expose this server through a tunnel or public reverse proxy.
+Working copies and command logs remain in this browser profile's IndexedDB. With `scripts/open.mjs`, registered sources are read from disk and explicitly saved results/receipts are written only to the selected output directory. The save endpoint validates the same-origin request, document identity, revision, text fingerprint, source format and preservation reports. There is no cloud sync or analytics. The server listens only on 127.0.0.1 and validates the Host header. Do not expose this server through a tunnel or public reverse proxy.
 
 Download important finished work. Browser storage can be cleared, evicted or fail on quota; it is a recovery aid, not an archival backup. A forced close before a pending transaction completes can lose the newest changes. Recovery logs from incompatible engine versions are rejected.
 
@@ -84,6 +85,7 @@ npm install --no-save --package-lock=false playwright
 npx playwright install chromium
 npm run test:browser
 npm run test:agent
+npm run test:complex
 ```
 
 The browser check uses synthetic documents created by the engine, never private fixtures. See docs/verification.md for the tested public release and boundaries.

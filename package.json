@@ -13,6 +13,7 @@
     "test": "node --experimental-transform-types --test tests/*.test.mjs",
     "audit": "node scripts/audit-public.mjs",
     "test:browser": "node tests/browser.mjs",
-    "test:agent": "node tests/agent-browser.mjs"
+    "test:agent": "node tests/agent-browser.mjs",
+    "test:complex": "node tests/complex-browser.mjs"
   }
 }

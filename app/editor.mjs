@@ -1,5 +1,6 @@
 import { createStudio } from '/editor-sdk.js';
 import { saveDraft, loadDraft, createJournalDraft, appendDraftOperations, saveDraftSnapshot, listDrafts } from '/drafts.mjs';
+import { requireLosslessExport } from '/export-check.mjs';
 const status = document.querySelector('#status');
 const saveButton = document.querySelector('#save');
 const openButton = document.querySelector('#open');
@@ -174,7 +175,9 @@ try {
       let base = data.slice(0);
       if (draft?.engineVersion && draft.operations?.length) {
         await recovery.replay(draft.operations);
-        base = recovery.export(format).bytes.slice().buffer;
+        const exported = recovery.export(format);
+        requireLosslessExport(exported.contentLoss, format);
+        base = exported.bytes.slice().buffer;
         result = await nativeLoadFile(base, name, { skipUnsavedGuard: true });
       }
       fileName = workingName;
@@ -218,10 +221,12 @@ try {
   async function persistWorkingCopy() {
     await flushChanges().catch(() => {});
     let bytes;
+    let contentLoss = {schemaVersion:1,outputFormat:fileFormat,count:0,losses:[]};
     if (!documentChanged) bytes = new Uint8Array(sourceBuffer);
     else {
       if (protectedDocument) throw new Error('보호 문서의 암호 유지 저장은 지원하지 않습니다. 원본은 보존됩니다.');
       const exported = recovery.export(fileFormat);
+      contentLoss = requireLosslessExport(exported.contentLoss, fileFormat);
       bytes = exported.bytes;
       await flushChanges().catch(() => {});
       if (journalStarted && !saveFailure) {
@@ -237,7 +242,7 @@ try {
         history.replaceState(null, '', draftUrl(draftId));
       } catch { saveFailure = true; }
     }
-    return bytes;
+    return {bytes,contentLoss};
   }
   window.localAutosave = { flush: flushChanges, state: () => ({ draftId, changeRevision, savedRevision, saveFailure, journalStarted }) };
 
@@ -310,15 +315,15 @@ try {
     delivery.hidden = false;delivery.textContent = '결과 파일 검증·저장 중…';
     try {
       const text = await currentText();
-      const bytes = await persistWorkingCopy();
+      const {bytes,contentLoss} = await persistWorkingCopy();
       if (await currentText() !== text) throw new Error('저장 도중 문서가 변경되었습니다. 다시 저장하세요.');
       const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(byte=>byte.toString(16).padStart(2,'0')).join('');
-      const response = await fetch(`/document/${registeredDocument.id}/result`,{method:'POST',headers:{'Content-Type':'application/octet-stream','X-Output-Revision':String(outputRevision),'X-Expected-Text-Sha256':hash},body:bytes});
+      const response = await fetch(`/document/${registeredDocument.id}/result`,{method:'POST',headers:{'Content-Type':'application/octet-stream','X-Output-Revision':String(outputRevision),'X-Expected-Text-Sha256':hash,'X-Export-Content-Loss':JSON.stringify(contentLoss)},body:bytes});
       if (!response.ok) throw new Error(await response.text());
       const receipt = await response.json();
       outputRevision = receipt.revision;
       history.replaceState(null,'',draftUrl(draftId));
-      delivery.textContent = `결과 저장됨 · ${receipt.pageCount}쪽 · 저장 버전 ${receipt.revision}\n${receipt.path}\n엔진 재열기: 텍스트·형식 일치. 한컴 배치 검수는 별도입니다.`;
+      delivery.textContent = `결과 저장됨 · ${receipt.pageCount}쪽 · 저장 버전 ${receipt.revision}\n${receipt.path}\n엔진 재열기: 텍스트·형식 일치, 보고된 내용 손실 0건. 한컴 배치 검수는 별도입니다.`;
       delivery.dataset.revision = String(receipt.revision);
       status.textContent = `${fileName} 결과 파일 저장 완료. 원본은 보존됩니다.`;
     } catch(error) { delivery.textContent = `결과 저장 실패: ${error.message}`; }
@@ -333,13 +338,16 @@ try {
       const params = new URLSearchParams({draft:draftId});
       if (registeredDocument) {params.set('id',registeredDocument.id);params.set('revision',String(outputRevision));}
       location.href = '/?'+params;
-    } catch (error) { status.textContent = `미리보기 준비 실패: ${error.message}`; }
+    } catch (error) {
+      status.textContent = `미리보기 준비 실패: ${error.message}`;
+      delivery.hidden = false;delivery.textContent = status.textContent;
+    }
   });
   saveButton.addEventListener('click', async () => {
     saveButton.disabled = true;
     openButton.disabled = true;
     try {
-      const bytes = await persistWorkingCopy();
+      const {bytes} = await persistWorkingCopy();
       const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
       const link = document.createElement('a');
       link.href = url;
@@ -347,7 +355,10 @@ try {
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 60000);
       status.textContent = `${link.download} 다운로드를 시작했습니다. 원본은 보존됩니다.`;
-    } catch (error) { status.textContent = `저장 실패: ${error.message}`; }
+    } catch (error) {
+      status.textContent = `저장 실패: ${error.message}`;
+      delivery.hidden = false;delivery.textContent = status.textContent;
+    }
     finally { saveButton.disabled = false; openButton.disabled = false; }
   });
 } catch (error) {

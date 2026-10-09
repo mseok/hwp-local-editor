@@ -140,8 +140,8 @@ index 91923c5..aaddd70 100644
 +    acknowledge: (revision: number) => wasm.localJournal.acknowledge(revision),
 +    export: (format: string) => {
 +      if (wasm.requiresPasswordForSave) throw new Error('보호 문서의 평문 저장은 지원하지 않습니다.');
-+      const bytes = format === 'hwpx' ? wasm.exportHwpx() : wasm.exportHwp();
-+      return { bytes, revision: wasm.localJournal.read(Number.MAX_SAFE_INTEGER).revision };
++      const artifact = format === 'hwpx' ? wasm.exportHwpxWithReport() : wasm.exportHwpWithReport();
++      return { ...artifact, revision: wasm.localJournal.read(Number.MAX_SAFE_INTEGER).revision };
 +    },
 +    replay: (operations: import('./recovery/local-operation-journal').LocalOperation[]) => {
 +      wasm.replayLocalOperations(operations);

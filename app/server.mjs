@@ -15,12 +15,15 @@ async function inspect(bytes) {
     engine.initSync({module:await readFile(path.join(built,'core/rhwp_bg.wasm'))});
   }
   let document;
+  let exported;
   try {
     document = new engine.HwpDocument(bytes);
     const text = JSON.parse(document.getTextFileUnicode());
-    return {format:document.getSourceFormat(),pageCount:document.pageCount(),textSha256:digest(typeof text === 'string' ? text : JSON.stringify(text))};
+    const format = document.getSourceFormat();
+    exported = format === 'hwpx' ? document.exportHwpxWithReport() : document.exportHwpWithReport();
+    return {format,pageCount:document.pageCount(),textSha256:digest(typeof text === 'string' ? text : JSON.stringify(text)),contentLoss:JSON.parse(exported.contentLoss())};
   } catch { throw Object.assign(new Error('Export could not be reopened by the editing engine.'),{status:422}); }
-  finally { document?.free(); }
+  finally { exported?.free();document?.free(); }
 }
 const workspace=await loadWorkspace(process.env.DOCUMENT_MANIFEST,inspect);
 let fontConfig={faces:[]};
@@ -35,7 +38,7 @@ const profile={id:'local-fonts',substitutions:{},crispAxisAlignedStrokes:true,co
   centerTrimPositiveTracking:true,bulletPreservePositiveIndent:true,leftPreserveFittingWrapText:true};
 const routes=new Map([
   ['/',[root,'index.html']],['/editor',[root,'editor.html']],['/tasks',[root,'tasks.html']],
-  ...['viewer.mjs','fonts.mjs','drafts.mjs','editor.mjs','tasks.mjs'].map(name=>['/'+name,[root,name]]),
+  ...['viewer.mjs','fonts.mjs','drafts.mjs','editor.mjs','tasks.mjs','export-check.mjs'].map(name=>['/'+name,[root,name]]),
   ['/rhwp.js',[built,'core/rhwp.js']],['/rhwp_bg.wasm',[built,'core/rhwp_bg.wasm']],
   ['/editor-sdk.js',[built,'sdk/index.js']],['/transport.js',[built,'sdk/transport.js']],
   ['/document-agent-contract.js',[built,'sdk/document-agent-contract.js']],
@@ -54,7 +57,10 @@ const server=http.createServer(async(req,res)=>{
       if(!workspace||!documentRoute||documentRoute[2]!=='result'||req.headers.origin!==`http://${req.headers.host}`||req.headers['content-type']!=='application/octet-stream'){res.writeHead(403).end();return;}
       const chunks=[];let length=0;
       for await(const chunk of req){length+=chunk.length;if(length>128*1024*1024)throw Object.assign(new Error('Export exceeds 128 MiB.'),{status:413});chunks.push(chunk);}
-      const receipt=await workspace.save(documentRoute[1],Buffer.concat(chunks),Number(req.headers['x-output-revision']),req.headers['x-expected-text-sha256']);
+      let contentLoss;
+      try { contentLoss=JSON.parse(req.headers['x-export-content-loss']); }
+      catch { throw Object.assign(new Error('Export preservation report is required.'),{status:400}); }
+      const receipt=await workspace.save(documentRoute[1],Buffer.concat(chunks),Number(req.headers['x-output-revision']),req.headers['x-expected-text-sha256'],contentLoss);
       return json(res,receipt);
     }
     if(url.pathname==='/documents.json') return json(res,workspace?.list()??[]);
