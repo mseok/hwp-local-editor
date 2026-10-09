@@ -21,6 +21,8 @@ for(const format of ['hwp','hwpx']){
     document.insertText(0,0,0,title);document.splitParagraph(0,0,title.length);
     document.insertText(0,1,0,body);document.splitParagraph(0,1,body.length);
     document.createTable(0,2,0,2,2);
+    document.setTableProperties(0,2,0,JSON.stringify({paddingTop:141,paddingBottom:141,outerLeft:71,outerRight:83,outerTop:47,outerBottom:59,horzOffset:31,vertOffset:41,cellSpacing:29}));
+    document.setCellProperties(0,2,0,0,JSON.stringify({applyInnerMargin:true,paddingTop:89,paddingBottom:91,paddingLeft:109,paddingRight:131}));
     for(const [cell,text] of ['기존 셀 A','셀 서식 수정','삭제 대상','보존할 셀 B'].entries())document.insertTextInCell(0,2,0,cell,0,0,text);
     const file=path.join(root,'format.'+format);
     await writeFile(file,format==='hwp'?document.exportHwp():document.exportHwpx());files.push(file);
@@ -132,6 +134,12 @@ try{
     try{
       verifyStyles(result,source);
       assert.ok(Math.abs(JSON.parse(result.getTableProperties(0,2,0)).tableWidth-originalWidth)<30);
+      const unchangedTableProps=properties=>{
+        const {tableWidth,tableHeight,...rest}=JSON.parse(properties);return rest;
+      };
+      assert.deepEqual(unchangedTableProps(result.getTableProperties(0,2,0)),unchangedTableProps(source.getTableProperties(0,2,0)));
+      const unchangedCellProps=properties=>{const {width,height,...rest}=JSON.parse(properties);return rest;};
+      assert.deepEqual(unchangedCellProps(result.getCellProperties(0,2,0,4)),unchangedCellProps(source.getCellProperties(0,2,0,0)));
       for(let cell=0;cell<9;cell++)assert.ok(JSON.parse(result.getCellProperties(0,2,0,cell)).width>=200);
       pass(entry.format+' explicit table width and rejected zero/tiny widths survive saved reopen');
       assert.deepEqual(JSON.parse(result.getTableDimensions(0,2,0)),{rowCount:3,colCount:3,cellCount:9});
