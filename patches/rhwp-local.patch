@@ -965,7 +965,7 @@ index cf7344f..4feb64d 100644
      }
  }
 diff --git a/src/model/table.rs b/src/model/table.rs
-index 406dd1b25..7ccab02a8 100644
+index 406dd1b25..1fe433d80 100644
 --- a/src/model/table.rs
 +++ b/src/model/table.rs
 @@ -305,6 +305,31 @@ impl Cell {
@@ -1012,7 +1012,29 @@ index 406dd1b25..7ccab02a8 100644
          self.update_ctrl_dimensions();
          self.rebuild_grid();
  
-@@ -1237,6 +1265,40 @@ impl Table {
+@@ -1210,6 +1238,21 @@ impl Table {
+         }
+     }
+ 
++    /// A side caption occupies inline space without changing the table's width.
++    pub(crate) fn inline_flow_width_hu(&self) -> HwpUnit {
++        let caption_width = self.caption.as_ref().map_or(0, |caption| {
++            if matches!(
++                caption.direction,
++                super::shape::CaptionDirection::Left | super::shape::CaptionDirection::Right
++            ) {
++                caption.width.saturating_add_signed(i32::from(caption.spacing))
++            } else {
++                0
++            }
++        });
++        self.flow_width_hu().saturating_add(caption_width)
++    }
++
+     pub fn get_column_widths(&self) -> Vec<HwpUnit> {
+         let mut widths = vec![0u32; self.col_count as usize];
+         for cell in &self.cells {
+@@ -1237,6 +1280,40 @@ impl Table {
          self.get_column_widths()
      }
  
@@ -1053,7 +1075,7 @@ index 406dd1b25..7ccab02a8 100644
      /// 열별 폭(HWPUNIT)을 절대값으로 설정한다.
      ///
      /// `widths.len()` 은 `col_count` 와 같아야 한다. 병합 셀(`col_span > 1`)은
-@@ -1335,7 +1397,7 @@ impl Table {
+@@ -1335,7 +1412,7 @@ impl Table {
              .stretched_row_heights()
              .and_then(|heights| heights.get(row_idx as usize).copied());
          let original_height = self.common.height;
@@ -1452,7 +1474,7 @@ index c5422b7..9e80c7b 100644
 +    }
 +}
 diff --git a/src/renderer/composer.rs b/src/renderer/composer.rs
-index 16342c689..1cd125fe6 100644
+index 16342c689..a672f8e7c 100644
 --- a/src/renderer/composer.rs
 +++ b/src/renderer/composer.rs
 @@ -377,50 +377,62 @@ fn compose_paragraph_scoped(
@@ -1557,6 +1579,15 @@ index 16342c689..1cd125fe6 100644
          }
      }
      let inline_controls = identify_inline_controls(para);
+@@ -453,7 +465,7 @@ fn compose_paragraph_scoped(
+                         ) =>
+                 {
+                     // [#5785 후속] 선언 폭 우선.
+-                    let table_width: u32 = t.flow_width_hu();
++                    let table_width: u32 = t.inline_flow_width_hu();
+                     Some((pos, table_width as i32, i))
+                 }
+                 _ => None,
 @@ -4566,6 +4578,7 @@ pub(crate) use line_breaking::{
      is_line_end_forbidden, is_line_start_forbidden, layout_paragraph_in_frame, layout_picture_band,
      paragraph_flow_end, recalculate_section_vpos, reflow_line_segs,
@@ -1566,7 +1597,7 @@ index 16342c689..1cd125fe6 100644
      StoredRowMissPolicy,
  };
 diff --git a/src/renderer/composer/line_breaking.rs b/src/renderer/composer/line_breaking.rs
-index 1c2b7cdc7..5c627ae28 100755
+index 1c2b7cdc7..4713b4cf5 100755
 --- a/src/renderer/composer/line_breaking.rs
 +++ b/src/renderer/composer/line_breaking.rs
 @@ -956,7 +956,7 @@ fn prepare_paragraph_projection(
@@ -1578,6 +1609,15 @@ index 1c2b7cdc7..5c627ae28 100755
                  italic: text_style.italic,
                  superscript: text_style.superscript,
                  subscript: text_style.subscript,
+@@ -2661,7 +2661,7 @@ fn inline_control_size_hwp(ctrl: &Control) -> Option<(i32, i32)> {
+         ),
+         Control::Table(table) if table.common.treat_as_char => {
+             // [#5785 후속] 선언 폭 우선 — 원시 열 합은 행별 구획이 다른 표에서 과대집계된다.
+-            let width = table.flow_width_hu() as i32;
++            let width = table.inline_flow_width_hu() as i32;
+             (width, table.common.height as i32)
+         }
+         Control::Equation(eq) if eq.common.treat_as_char => (
 @@ -2679,7 +2679,7 @@ fn inline_control_size_hwp(ctrl: &Control) -> Option<(i32, i32)> {
      }
  }
@@ -2507,7 +2547,7 @@ index f50cde5..a8e4746 100644
              hwp3_variant: false,
              hft_ascii_halfwidth: false,
 diff --git a/src/renderer/layout/paragraph_layout.rs b/src/renderer/layout/paragraph_layout.rs
-index c585b32a6..a5d822fe9 100755
+index c585b32a6..55d7a5159 100755
 --- a/src/renderer/layout/paragraph_layout.rs
 +++ b/src/renderer/layout/paragraph_layout.rs
 @@ -91,6 +91,65 @@ fn terminal_tracking_after_inline_picture(
@@ -2808,6 +2848,33 @@ index c585b32a6..a5d822fe9 100755
              if leader_dashes > 0 && slack > 0.0 {
                  // Task #352: 라인에 dash leader 가 있고 슬랙이 양수면
                  // dash 가 흡수 (PDF elastic leader 동작 모방). 공백·일반
+@@ -3200,7 +3382,7 @@ impl LayoutEngine {
+             .iter()
+             .zip(table_widths.iter())
+             .map(|((_, t), colsum)| {
+-                let declared = hwpunit_to_px(t.flow_width_hu() as i32, self.dpi);
++                let declared = hwpunit_to_px(t.inline_flow_width_hu() as i32, self.dpi);
+                 if declared > 0.0 {
+                     declared
+                 } else {
+@@ -3691,7 +3873,7 @@ impl LayoutEngine {
+                 let mt = measured_tables
+                     .iter()
+                     .find(|mt| mt.para_index == para_index && mt.control_index == *ctrl_idx);
+-                let tw = table_widths[table_idx];
++                let tw = table_declared_widths[table_idx];
+                 let tbl_h = mt
+                     .map(|m| m.total_height)
+                     .unwrap_or_else(|| hwpunit_to_px(tbl.common.height as i32, self.dpi));
+@@ -3828,7 +4010,7 @@ impl LayoutEngine {
+             let mt = measured_tables
+                 .iter()
+                 .find(|mt| mt.para_index == para_index && mt.control_index == *ctrl_idx);
+-            let tw = table_widths[table_idx];
++            let tw = table_declared_widths[table_idx];
+             let (om_left, om_right) = table_om_px[table_idx];
+             let tbl_h = mt
+                 .map(|m| m.total_height)
 @@ -4920,14 +5102,13 @@ impl LayoutEngine {
          let marker_geometry = composed.numbering_text.as_ref().map(|(num_text, head)| {
              para.and_then(|p| list_marker_geometry(p, styles))
@@ -9018,7 +9085,7 @@ index f860fb8fa..202855e83 100644
        includeAssets: ['favicon.ico', 'icons/*.png'],
        manifest: {
 diff --git a/rhwp-studio/src/ui/table-cell-props-dialog.ts b/rhwp-studio/src/ui/table-cell-props-dialog.ts
-index 8e99cf288..fbee9759b 100644
+index 8e99cf288..79427cb0f 100644
 --- a/rhwp-studio/src/ui/table-cell-props-dialog.ts
 +++ b/rhwp-studio/src/ui/table-cell-props-dialog.ts
 @@ -1,7 +1,7 @@
@@ -9141,7 +9208,63 @@ index 8e99cf288..fbee9759b 100644
        outerGrid.appendChild(this.marginOuterInputs[key]);
        outerGrid.appendChild(this.unit('mm'));
      }
-@@ -1291,7 +1308,8 @@ export class TableCellPropsDialog extends ModalDialog {
+@@ -686,20 +703,22 @@ export class TableCellPropsDialog extends ModalDialog {
+     // 3×3: 행(위/가운데/아래) × 열(왼쪽/가운데/오른쪽)
+     // dir: 0=왼쪽, 1=오른쪽, 2=위, 3=아래, -1=없음(가운데)
+     const capPositions = [
+-      { dir: 0, sub: 0, svg: this.captionSvg('left-top') },   // 왼쪽 위
+-      { dir: 2, sub: 0, svg: this.captionSvg('top') },        // 위
+-      { dir: 1, sub: 0, svg: this.captionSvg('right-top') },  // 오른쪽 위
+-      { dir: 0, sub: 1, svg: this.captionSvg('left-mid') },   // 왼쪽 가운데
+-      { dir: -1, sub: 0, svg: this.captionSvg('none') },      // 가운데 = 캡션 없음
+-      { dir: 1, sub: 1, svg: this.captionSvg('right-mid') },  // 오른쪽 가운데
+-      { dir: 0, sub: 2, svg: this.captionSvg('left-bot') },   // 왼쪽 아래
+-      { dir: 3, sub: 0, svg: this.captionSvg('bottom') },     // 아래
+-      { dir: 1, sub: 2, svg: this.captionSvg('right-bot') },  // 오른쪽 아래
++      { dir: 0, sub: 0, label: '캡션 왼쪽 위', svg: this.captionSvg('left-top') },
++      { dir: 2, sub: 0, label: '캡션 위', svg: this.captionSvg('top') },
++      { dir: 1, sub: 0, label: '캡션 오른쪽 위', svg: this.captionSvg('right-top') },
++      { dir: 0, sub: 1, label: '캡션 왼쪽 가운데', svg: this.captionSvg('left-mid') },
++      { dir: -1, sub: 0, label: '캡션 없음', svg: this.captionSvg('none') },
++      { dir: 1, sub: 1, label: '캡션 오른쪽 가운데', svg: this.captionSvg('right-mid') },
++      { dir: 0, sub: 2, label: '캡션 왼쪽 아래', svg: this.captionSvg('left-bot') },
++      { dir: 3, sub: 0, label: '캡션 아래', svg: this.captionSvg('bottom') },
++      { dir: 1, sub: 2, label: '캡션 오른쪽 아래', svg: this.captionSvg('right-bot') },
+     ];
+     capPositions.forEach((pos) => {
+       const btn = document.createElement('button');
+       btn.type = 'button';
+       btn.className = 'tcp-caption-item';
++      btn.setAttribute('aria-label', pos.label);
++      btn.title = pos.label;
+       appendSvgMarkup(btn, pos.svg);
+       btn.dataset.dir = String(pos.dir);
+       btn.dataset.sub = String(pos.sub);
+@@ -736,6 +755,7 @@ export class TableCellPropsDialog extends ModalDialog {
+     const capGapRow = this.row();
+     capGapRow.appendChild(this.label(i18nText('dialog.tableCellProps.label.label.x0ad57d')));
+     this.captionSpacingInput = this.numberInput();
++    this.captionSpacingInput.setAttribute('aria-label', '캡션 간격(mm)');
+     capGapRow.appendChild(this.captionSpacingInput);
+     capGapRow.appendChild(this.unit('mm'));
+     this.captionFieldsWrap.appendChild(capGapRow);
+@@ -743,6 +763,7 @@ export class TableCellPropsDialog extends ModalDialog {
+     const capSizeRow = this.row();
+     capSizeRow.appendChild(this.label(i18nText('dialog.tableCellProps.label.label.xa29000')));
+     this.captionWidthInput = this.numberInput();
++    this.captionWidthInput.setAttribute('aria-label', '캡션 너비(mm)');
+     capSizeRow.appendChild(this.captionWidthInput);
+     capSizeRow.appendChild(this.unit('mm'));
+     this.captionFieldsWrap.appendChild(capSizeRow);
+@@ -760,6 +781,7 @@ export class TableCellPropsDialog extends ModalDialog {
+ 
+   /** 위/아래 선택 시 캡션 크기 비활성, 좌/우 선택 시 활성 */
+   private updateCaptionWidthState(): void {
++    this.captionPosBtns.forEach(b => b.setAttribute('aria-pressed', String(b.classList.contains('active'))));
+     const activeBtn = this.captionPosBtns.find(b => b.classList.contains('active'));
+     const dir = activeBtn ? parseInt(activeBtn.dataset.dir!, 10) : -1;
+     // dir 2=위, 3=아래 → 캡션 크기 비활성 (위/아래는 표 너비와 동일)
+@@ -1291,7 +1313,8 @@ export class TableCellPropsDialog extends ModalDialog {
      // 기본 탭
      if (tp.tableWidth != null) {
        this.basicWidthInput.value = hwpunitToMm(tp.tableWidth).toFixed(1);
@@ -9151,7 +9274,7 @@ index 8e99cf288..fbee9759b 100644
        this.basicWidthInput.style.removeProperty('background');
      }
      if (tp.tableHeight != null) {
-@@ -1353,21 +1371,39 @@ export class TableCellPropsDialog extends ModalDialog {
+@@ -1353,21 +1376,39 @@ export class TableCellPropsDialog extends ModalDialog {
      }
    }
  
@@ -9198,7 +9321,7 @@ index 8e99cf288..fbee9759b 100644
      }
      const activeVAlign = this.cellVAlignBtns.findIndex(b => b.classList.contains('active'));
      if (activeVAlign >= 0) newCellProps.verticalAlign = activeVAlign;
-@@ -1403,25 +1439,25 @@ export class TableCellPropsDialog extends ModalDialog {
+@@ -1403,25 +1444,25 @@ export class TableCellPropsDialog extends ModalDialog {
        textWrap: this.getSelectedWrap(),
        vertRelTo: this.vertRelSelect.value,
        vertAlign: this.vertAlignSelect.value,
@@ -9235,7 +9358,7 @@ index 8e99cf288..fbee9759b 100644
      };
  
      // 캡션 속성 (가운데 = 캡션 없음)
-@@ -1432,8 +1468,8 @@ export class TableCellPropsDialog extends ModalDialog {
+@@ -1432,8 +1473,8 @@ export class TableCellPropsDialog extends ModalDialog {
        newTableProps.captionDirection = parseInt(this.captionDirSelect.value, 10);
        const activeCapBtn = this.captionPosBtns.find(b => b.classList.contains('active'));
        newTableProps.captionVertAlign = activeCapBtn ? parseInt(activeCapBtn.dataset.sub!, 10) : 0;
@@ -9246,7 +9369,7 @@ index 8e99cf288..fbee9759b 100644
      }
  
      // 표 테두리/배경 (table 모드에서만 테두리/배경 탭 존재)
-@@ -1454,10 +1490,19 @@ export class TableCellPropsDialog extends ModalDialog {
+@@ -1454,10 +1495,19 @@ export class TableCellPropsDialog extends ModalDialog {
        }
      }
  
@@ -9560,7 +9683,7 @@ index 609d0525d..2fff61ba4 100644
          // 이동 규칙도 대화상자와 공유한다(셀 매치는 셀 좌표로 간다).
          navigateToSearchHit(ih, result);
 diff --git a/src/document_core/commands/table_ops.rs b/src/document_core/commands/table_ops.rs
-index 7c31daa4c..78620793d 100644
+index 7c31daa4c..e328f71ef 100644
 --- a/src/document_core/commands/table_ops.rs
 +++ b/src/document_core/commands/table_ops.rs
 @@ -42,6 +42,395 @@ struct CellResizeUpdate {
@@ -11341,7 +11464,7 @@ index 7c31daa4c..78620793d 100644
              table.border_fill_id = new_bf_id;
              for cell in &mut table.cells {
                  cell.border_fill_id = new_bf_id;
-@@ -3116,44 +3684,61 @@ impl DocumentCore {
+@@ -3116,44 +3684,64 @@ impl DocumentCore {
          // 중간 표 캡션 삭제 시 남은 표 번호가 한컴처럼 1부터 이어지도록 보장한다.
          if caption_created || caption_changed {
              crate::parser::assign_auto_numbers(&mut self.document);
@@ -11416,6 +11539,9 @@ index 7c31daa4c..78620793d 100644
          }
  
 +        self.reflow_table_ancestors_by_path(section_idx, parent_para_idx, path);
++        if path.len() == 1 && (caption_created || caption_changed) {
++            self.reflow_paragraph(section_idx, parent_para_idx);
++        }
          self.document.sections[section_idx].raw_stream = None;
          self.recompose_section(section_idx);
          self.paginate_if_needed();
@@ -11492,7 +11618,7 @@ index 42295aa6d..aa3178337 100644
                  section,
                  para,
 diff --git a/src/document_core/commands/text_editing.rs b/src/document_core/commands/text_editing.rs
-index 9f6f809d7..66a5b8116 100644
+index 9f6f809d7..ae41fd17e 100644
 --- a/src/document_core/commands/text_editing.rs
 +++ b/src/document_core/commands/text_editing.rs
 @@ -16,7 +16,8 @@ use crate::model::paragraph::{LineSeg, ParaMeta, Paragraph};
@@ -11505,7 +11631,29 @@ index 9f6f809d7..66a5b8116 100644
  };
  use crate::renderer::page_layout::PageLayoutInfo;
  use crate::renderer::pagination::PageItem;
-@@ -3181,7 +3182,14 @@ impl DocumentCore {
+@@ -1725,11 +1726,19 @@ impl DocumentCore {
+         // 문단 스타일 조회 — 여백은 `ParagraphBox::body_for_style` 가 해소한다.
+         let para = &section.paragraphs[para_idx];
+         let para_style = self.styles.para_styles.get(para.para_shape_id as usize);
++        let paragraph_box = ParagraphBox::body_for_style(col_area.width, para_style, self.dpi);
++        let reflow = if para.controls.iter().any(|control| {
++            matches!(control, Control::Table(table) if table.common.treat_as_char)
++        }) {
++            reflow_line_segs_after_inline_table_edit
++        } else {
++            reflow_line_segs
++        };
+         // 본문: 열 상자를 그대로 넘긴다. 이 자리가 대화형 편집의 관문이고,
+         // 종전에 두 끝점을 버려 `column_start=0` 을 발행했던 지점이다.
+-        reflow_line_segs(
++        reflow(
+             &mut self.document.sections[section_idx].paragraphs[para_idx],
+-            ParagraphBox::body_for_style(col_area.width, para_style, self.dpi),
++            paragraph_box,
+             &self.styles,
+             self.dpi,
+         );
+@@ -3181,7 +3190,14 @@ impl DocumentCore {
                  return Self::cell_metrics_for_control(control, cell_idx);
              }
              para = match control {
@@ -11521,7 +11669,7 @@ index 9f6f809d7..66a5b8116 100644
                  Control::Shape(s) => super::super::helpers::get_textbox_from_shape(s)?
                      .paragraphs
                      .get(cell_para_idx)?,
-@@ -3230,7 +3238,14 @@ impl DocumentCore {
+@@ -3230,7 +3246,14 @@ impl DocumentCore {
          let margin_right = para_style.map(|s| s.margin_right).unwrap_or(0.0);
          let final_width = (available_width - margin_left - margin_right).max(0.0);
          // 셀 내용 상자 — 열이 없으므로 미스냅.
@@ -11537,7 +11685,7 @@ index 9f6f809d7..66a5b8116 100644
              cell_para,
              ParagraphBox::content_width_px(final_width, dpi),
              &styles,
-@@ -4559,7 +4574,13 @@ impl DocumentCore {
+@@ -4559,7 +4582,13 @@ impl DocumentCore {
              cell_para_idx,
          )?;
          let original_vpos = cell_para.line_segs.first().map(|seg| seg.vertical_pos);
@@ -11552,7 +11700,7 @@ index 9f6f809d7..66a5b8116 100644
          if let Some(meta) = restore_meta {
              restore_para_meta(&mut new_para, meta, &self.document.doc_info.para_shapes);
          }
-@@ -5721,10 +5742,15 @@ impl DocumentCore {
+@@ -5721,10 +5750,15 @@ impl DocumentCore {
              let is_last = i == path.len() - 1;
              let paragraphs = match para.controls.get_mut(ctrl_idx) {
                  Some(Control::Table(t)) => {
@@ -11572,7 +11720,7 @@ index 9f6f809d7..66a5b8116 100644
                  }
                  Some(Control::Shape(shape)) => {
                      if cell_idx != 0 {
-@@ -5861,6 +5887,7 @@ impl DocumentCore {
+@@ -5861,6 +5895,7 @@ impl DocumentCore {
          );
  
          // 최외곽 표 dirty 마킹
@@ -11580,7 +11728,7 @@ index 9f6f809d7..66a5b8116 100644
          let outer_ctrl = path[0].0;
          self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
  
-@@ -5922,6 +5949,7 @@ impl DocumentCore {
+@@ -5922,6 +5957,7 @@ impl DocumentCore {
              None,
          );
  
@@ -11588,7 +11736,7 @@ index 9f6f809d7..66a5b8116 100644
          let outer_ctrl = path[0].0;
          self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
          self.document.sections[section_idx].raw_stream = None;
-@@ -6000,6 +6028,7 @@ impl DocumentCore {
+@@ -6000,6 +6036,7 @@ impl DocumentCore {
          self.reflow_cell_paragraph_by_path(section_idx, parent_para_idx, path, start_para);
  
          // dirty/이벤트는 delete_text_in_cell_by_path 와 동형(최외곽 컨트롤 기준).
@@ -11596,7 +11744,7 @@ index 9f6f809d7..66a5b8116 100644
          let outer_ctrl = path[0].0;
          self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
          self.document.sections[section_idx].raw_stream = None;
-@@ -6035,51 +6064,22 @@ impl DocumentCore {
+@@ -6035,51 +6072,22 @@ impl DocumentCore {
              .last()
              .ok_or_else(|| HwpError::RenderError("경로가 비어있습니다".to_string()))?;
          let cell_para_idx = last.2;
@@ -11662,7 +11810,7 @@ index 9f6f809d7..66a5b8116 100644
  
          // [#2755] flat split 형제(:2387)와 동일하게 분할된 두 문단을 셀 폭으로 재래핑한 뒤
          // vpos 를 재계산한다(리플로우가 line_segs 를 재작성하므로 shift/recalc 를 그 뒤에 둔다).
-@@ -6102,6 +6102,7 @@ impl DocumentCore {
+@@ -6102,6 +6110,7 @@ impl DocumentCore {
              Some(cell_para_idx + 1),
          );
  
@@ -11670,7 +11818,7 @@ index 9f6f809d7..66a5b8116 100644
          let outer_ctrl = path[0].0;
          self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
          self.document.sections[section_idx].raw_stream = None;
-@@ -6139,51 +6140,19 @@ impl DocumentCore {
+@@ -6139,51 +6148,19 @@ impl DocumentCore {
              ));
          }
          let prev_idx = cell_para_idx - 1;
@@ -11734,7 +11882,7 @@ index 9f6f809d7..66a5b8116 100644
  
          // [#2755] flat merge 형제(:2486)와 동일하게 병합 생존 문단을 셀 폭으로 재래핑한 뒤
          // vpos 를 재계산한다(리플로우가 line_segs 를 재작성하므로 shift/recalc 를 그 뒤에 둔다).
-@@ -6205,6 +6174,7 @@ impl DocumentCore {
+@@ -6205,6 +6182,7 @@ impl DocumentCore {
              None,
          );
  
@@ -12468,7 +12616,7 @@ index 4a0ede6af..32dac4651 100644
      text_offset: usize,
      after_control: bool,
 diff --git a/src/document_core/queries/cursor_rect.rs b/src/document_core/queries/cursor_rect.rs
-index d4d46931d..79c81ef64 100644
+index d4d46931d..31cbcff93 100644
 --- a/src/document_core/queries/cursor_rect.rs
 +++ b/src/document_core/queries/cursor_rect.rs
 @@ -3551,6 +3551,38 @@ impl DocumentCore {
@@ -12559,3 +12707,15 @@ index d4d46931d..79c81ef64 100644
                  page_num,
                  None,
                  None,
+@@ -3971,6 +4013,11 @@ impl DocumentCore {
+                     parent_para: usize,
+                     path: &[(usize, usize, usize)],
+                 ) -> bool {
++                    // Nested captions are siblings of their table in an enclosing
++                    // cell. Their paths must not identify that outer table.
++                    if matches!(&node.node_type, RenderNodeType::TextLine(line) if line.caption_owner.is_some()) {
++                        return false;
++                    }
+                     if let RenderNodeType::TextRun(ref tr) = node.node_type {
+                         return tr.cell_context.as_ref().map_or(false, |ctx| {
+                             ctx.parent_para_index == parent_para

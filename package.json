@@ -20,6 +20,8 @@
     "test:table-split": "node tests/table-split-browser.mjs",
     "test:table-object": "node tests/table-object-browser.mjs",
     "test:table-move": "node tests/table-move-browser.mjs",
-    "test:table-caption": "node tests/table-caption-browser.mjs"
+    "test:table-transpose": "node tests/table-transpose-browser.mjs",
+    "test:table-caption": "node tests/table-caption-browser.mjs",
+    "test:table-caption-placement": "node tests/table-caption-placement-browser.mjs"
   }
 }

@@ -98,7 +98,9 @@ npm run test:nested
 npm run test:table-split
 npm run test:table-object
 npm run test:table-move
+npm run test:table-transpose
 npm run test:table-caption
+npm run test:table-caption-placement
 ```
 
 The browser check uses synthetic documents created by the engine, never private fixtures. See docs/verification.md for the tested public release and boundaries.
