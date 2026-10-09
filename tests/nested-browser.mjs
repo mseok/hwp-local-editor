@@ -43,6 +43,17 @@ for(const format of ['hwp','hwpx']){
   try{const file=path.join(root,'nested.'+format);await writeFile(file,format==='hwp'?document.exportHwp():document.exportHwpx());files.push(file);}
   finally{document.free();}
 }
+for(const [name,input] of [['navigation',bytes],['navigation-merged',mergedBytes],['navigation-flat',bytes],['navigation-hidden-columns',bytes]]){
+  const document=new HwpDocument(input);
+  try{
+    if(name==='navigation-merged')document.mergeTableCellsByPath(0,1,JSON.stringify([{controlIndex:0,cellIndex:0,cellParaIndex:0},{controlIndex:0,cellIndex:0,cellParaIndex:0},{controlIndex:0,cellIndex:0,cellParaIndex:0}]),2,1,2,2);
+    if(name==='navigation-hidden-columns'){
+      const p=JSON.stringify([{controlIndex:0,cellIndex:0,cellParaIndex:0},{controlIndex:0,cellIndex:0,cellParaIndex:0}]);
+      document.splitTableCellIntoByPath(0,1,p,0,0,1,2,false,false);document.mergeTableCellsByPath(0,1,p,0,0,0,1);
+    }
+    for(const format of ['hwp','hwpx']){const file=path.join(root,name+'.'+format);await writeFile(file,format==='hwp'?document.exportHwp():document.exportHwpx());files.push(file);}
+  }finally{document.free();}
+}
 const data=await createWorkspace(files,path.join(root,'output'));
 const manifest=path.join(root,'workspace.json');await writeFile(manifest,JSON.stringify(data));
 const port=18871,base=`http://127.0.0.1:${port}`;
@@ -63,15 +74,13 @@ async function select(page,text){
   await frame.getByRole('button',{name:'찾아 바꾸기 닫기',exact:true}).click();
 }
 async function save(page,revision){await page.getByRole('button',{name:'결과 파일 저장',exact:true}).click();await page.locator(`#delivery[data-revision="${revision}"]`).waitFor();}
-function assertOuterTextFits(document){
+function assertOuterTextFits(document,tablePath=targetPath){
   const outer=JSON.parse(document.getTableCellBboxes(0,1,0))[0];
-  const glyph=[...document.renderPageSvg(0).matchAll(/<text\b([^>]*)>([^<]*)<\/text>/g)].find(match=>match[2]==='A');
-  assert.ok(glyph,'Outer-cell label A remains rendered');
-  const x=Number(glyph[1].match(/\bx="([^"]+)"/)[1]);
-  const y=Number(glyph[1].match(/\by="([^"]+)"/)[1]);
+  const label=JSON.parse(document.getCursorRectByPath(0,1,JSON.stringify([{controlIndex:0,cellIndex:0,cellParaIndex:0}]),5));
+  const {x,y}=label;
   assert.ok(x>=outer.x&&x<outer.x+outer.w,'Outer-cell text must wrap inside its own cell after the inner table grows');
   assert.ok(y>outer.y&&y<=outer.y+outer.h,'Outer-cell text must stay inside its vertical cell bounds');
-  const inner=JSON.parse(document.getTableCellBboxesByPath(0,1,targetPath));
+  const inner=JSON.parse(document.getTableCellBboxesByPath(0,1,tablePath));
   assert.ok(inner.every(cell=>cell.x>=outer.x&&cell.x+cell.w<=outer.x+outer.w+0.2&&cell.y>=outer.y&&cell.y+cell.h<=outer.y+outer.h+0.2),'Expanded inner table must remain inside its outer cell');
   assert.ok(!inner.some(cell=>x>=cell.x&&x<cell.x+cell.w&&y>cell.y&&y<cell.y+cell.h),'Outer-cell text must not overlap the expanded inner table');
 }
@@ -85,7 +94,7 @@ function preserved(source,result){
 }
 try{
   await new Promise((resolve,reject)=>{let stderr='';child.stderr.on('data',v=>stderr+=v);const timer=setTimeout(()=>reject(new Error('Server startup timeout: '+stderr)),10000);child.once('error',reject);child.once('exit',code=>reject(new Error('Server exited '+code+': '+stderr)));child.stdout.once('data',()=>{clearTimeout(timer);resolve();});});
-  for(const entry of data.documents){
+  for(const entry of data.documents.filter(entry=>entry.name.startsWith('nested.'))){
     const traversal=new HwpDocument(await readFile(entry.source));
     try{
       const first=JSON.parse(traversal.searchText('중첩',0,0,0,true,true,true,'[]'));
@@ -348,6 +357,45 @@ try{
       pass(entry.format+' inner merge and undo survive journal recovery without changing the outer table');
     }finally{result.free();}
     await page.close();
+  }
+  for(const entry of data.documents.filter(entry=>entry.name.startsWith('navigation'))){
+    const deep=entry.name.startsWith('navigation-merged');
+    const flat=entry.name.startsWith('navigation-flat');
+    const cellPath=[{controlIndex:0,cellIndex:0,cellParaIndex:0},...(!flat?[{controlIndex:0,cellIndex:0,cellParaIndex:0}]:[]),...(deep?[{controlIndex:0,cellIndex:0,cellParaIndex:0}]:[])];
+    const pathJson=JSON.stringify(cellPath);
+    const source=new HwpDocument(await readFile(entry.source));
+    const sourceDimensions=JSON.parse(source.getTableDimensionsByPath(0,1,pathJson));
+    const nextMarker='NEXT>'.repeat(8);
+    const cellText=(document,index)=>{const p=structuredClone(cellPath);p.at(-1).cellIndex=index;return Array.from({length:document.getCellParagraphCountByPath(0,1,JSON.stringify(p))},(_,para)=>{p.at(-1).cellParaIndex=para;const j=JSON.stringify(p);return document.getTextInCellByPath(0,1,j,0,document.getCellParagraphLengthByPath(0,1,j));}).join('\n');};
+    const firstText=cellText(source,0),nextText=cellText(source,1),lastIndex=sourceDimensions.cellCount-1,lastText=cellText(source,lastIndex);
+    const page=await context.newPage();await page.goto(base+'/editor?id='+entry.id);await ready(page);
+    const frame=page.frameLocator('#editor iframe'),input=frame.getByRole('textbox',{name:'문서 편집 입력',exact:true});
+    try{
+      await select(page,deep?'병합 자료0':flat?'바깥 셀 A':'중첩 셀 보존');await input.press('Tab');await page.keyboard.insertText(nextMarker);await save(page,1);
+      let result=new HwpDocument(await readFile(entry.output));
+      try{assert.equal(cellText(result,0),firstText,'Tab must clear the previous find selection');assert.equal(cellText(result,1),nextMarker+nextText);assert.equal(result.getTableProperties(0,1,0),source.getTableProperties(0,1,0));}
+      finally{result.free();}
+      await select(page,deep?'병합 자료8':flat?'바깥 셀 D':'중첩 수정 대상');await input.press('Tab');await page.keyboard.insertText('ROW>');await input.press('Shift+Tab');await page.keyboard.insertText('<BACK');await save(page,2);
+      result=new HwpDocument(await readFile(entry.output));
+      try{
+        assert.deepEqual(JSON.parse(result.getTableDimensionsByPath(0,1,pathJson)),{rowCount:sourceDimensions.rowCount+1,colCount:sourceDimensions.colCount,cellCount:sourceDimensions.cellCount+sourceDimensions.colCount},'Last inner cell Tab must append an inner row');
+        assert.equal(JSON.parse(result.getTablePropertiesByPath(0,1,pathJson)).tableWidth,JSON.parse(source.getTablePropertiesByPath(0,1,pathJson)).tableWidth,'Added row must preserve the physical width even when columns have only merged-cell evidence');
+        assert.equal(cellText(result,0),firstText);assert.equal(cellText(result,lastIndex),(lastIndex===1?nextMarker:'')+lastText+'<BACK');assert.equal(cellText(result,sourceDimensions.cellCount),'ROW>');
+        if(flat){assert.equal(result.getTablePropertiesByPath(0,1,targetPath),source.getTablePropertiesByPath(0,1,targetPath));for(let cell=0;cell<2;cell++)assert.equal(result.getCellPropertiesByPath(0,1,targetPath,cell),source.getCellPropertiesByPath(0,1,targetPath,cell));}
+        else{assert.equal(result.getTableProperties(0,1,0),source.getTableProperties(0,1,0));for(let cell=0;cell<4;cell++)assert.equal(result.getCellProperties(0,1,0,cell),source.getCellProperties(0,1,0,cell));}
+        if(deep)assert.equal(result.getTablePropertiesByPath(0,1,JSON.stringify(cellPath.slice(0,2))),source.getTablePropertiesByPath(0,1,JSON.stringify(cellPath.slice(0,2))));
+        assertOuterTextFits(result,flat?targetPath:pathJson);
+      }finally{result.free();}
+      for(let undo=0;undo<3;undo++){await frame.locator('#menu-bar').getByText('편집',{exact:true}).click();await frame.getByText('되돌리기',{exact:true}).click();}
+      await page.waitForFunction(()=>{const d=document.querySelector('#status').dataset;return Number(d.changeRevision)>0&&d.changeRevision===d.savedRevision;});
+      await page.reload();await ready(page);await save(page,3);result=new HwpDocument(await readFile(entry.output));
+      try{
+        assert.deepEqual(JSON.parse(result.getTableDimensionsByPath(0,1,pathJson)),sourceDimensions);assert.equal(cellText(result,0),firstText);assert.equal(cellText(result,1),nextMarker+nextText);assert.equal(cellText(result,lastIndex),(lastIndex===1?nextMarker:'')+lastText);
+        assert.equal(result.getTableProperties(0,1,0),source.getTableProperties(0,1,0));assert.equal(digest(await readFile(entry.source)),entry.sourceSha256);
+        assertOuterTextFits(result,flat?targetPath:pathJson);
+        pass(entry.format+' '+cellPath.length+'-level Tab traversal, last-cell row insertion and undo survive journal recovery without ancestor changes');
+      }finally{result.free();}
+    }finally{source.free();await page.close();}
   }
   assert.deepEqual(report.errors,[]);assert.deepEqual(report.warnings,[]);assert.deepEqual(report.externalRequests,[]);pass('no browser errors, warnings or external requests');
 }finally{

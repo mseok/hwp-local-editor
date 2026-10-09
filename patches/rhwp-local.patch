@@ -829,7 +829,7 @@ index cf7344f..4feb64d 100644
      }
  }
 diff --git a/src/model/table.rs b/src/model/table.rs
-index 406dd1b..cd7ee25 100644
+index 406dd1b25..ab68041a9 100644
 --- a/src/model/table.rs
 +++ b/src/model/table.rs
 @@ -305,6 +305,31 @@ impl Cell {
@@ -864,6 +864,56 @@ index 406dd1b..cd7ee25 100644
          if table.row_count == 1
              && table.col_count == 1
              && table.cells.len() == 1
+@@ -1237,6 +1262,40 @@ impl Table {
+         self.get_column_widths()
+     }
+ 
++    fn column_widths_for_row_insertion(&self) -> Vec<HwpUnit> {
++        let mut widths = self.get_column_widths();
++        let mut missing = vec![true; widths.len()];
++        for cell in &self.cells {
++            if cell.col_span == 1 && cell.width > 0 && (cell.col as usize) < missing.len() {
++                missing[cell.col as usize] = false;
++            }
++        }
++        let mut remaining = missing.iter().filter(|value| **value).count();
++        let mut merged: Vec<_> = self.cells.iter().filter(|cell| cell.col_span > 1).collect();
++        merged.sort_by_key(|cell| cell.col_span);
++        // A column hidden by merges has no single-cell width. Infer only those
++        // missing tracks, preserving measured tracks and each usable span sum.
++        for cell in merged {
++            if remaining == 0 { break; }
++            let start = cell.col as usize;
++            let end = start + cell.col_span as usize;
++            if end > widths.len() { continue; }
++            let unknown: Vec<_> = (start..end).filter(|col| missing[*col]).collect();
++            if unknown.is_empty() { continue; }
++            let known: u64 = (start..end).filter(|col| !missing[*col])
++                .map(|col| u64::from(widths[col])).sum();
++            let residual = u64::from(cell.width).saturating_sub(known);
++            if residual < unknown.len() as u64 { continue; }
++            let inferred = distribute_hwp_units(residual as HwpUnit, unknown.len() as u16);
++            for (col, width) in unknown.into_iter().zip(inferred) {
++                widths[col] = width;
++                missing[col] = false;
++                remaining -= 1;
++            }
++        }
++        widths
++    }
++
+     /// 열별 폭(HWPUNIT)을 절대값으로 설정한다.
+     ///
+     /// `widths.len()` 은 `col_count` 와 같아야 한다. 병합 셀(`col_span > 1`)은
+@@ -1335,7 +1394,7 @@ impl Table {
+             .stretched_row_heights()
+             .and_then(|heights| heights.get(row_idx as usize).copied());
+         let original_height = self.common.height;
+-        let col_widths = self.get_column_widths();
++        let col_widths = self.column_widths_for_row_insertion();
+ 
+         // 셀 height용
+         let row_heights = self.get_row_heights();
 diff --git a/src/model/table/tests.rs b/src/model/table/tests.rs
 index 58183dc..48ae136 100644
 --- a/src/model/table/tests.rs
@@ -8240,7 +8290,7 @@ index 609d0525d..2fff61ba4 100644
          // 이동 규칙도 대화상자와 공유한다(셀 매치는 셀 좌표로 간다).
          navigateToSearchHit(ih, result);
 diff --git a/src/document_core/commands/table_ops.rs b/src/document_core/commands/table_ops.rs
-index 7c31daa4c..b62b6a28d 100644
+index 7c31daa4c..8b7db4ceb 100644
 --- a/src/document_core/commands/table_ops.rs
 +++ b/src/document_core/commands/table_ops.rs
 @@ -78,22 +78,45 @@ impl DocumentCore {
@@ -8502,7 +8552,7 @@ index 7c31daa4c..b62b6a28d 100644
 +        Ok(())
 +    }
 +
-+    fn reflow_table_ancestors_by_path(
++    pub(crate) fn reflow_table_ancestors_by_path(
 +        &mut self,
 +        section_idx: usize,
 +        parent_para_idx: usize,
@@ -9069,7 +9119,7 @@ index 42295aa6d..aa3178337 100644
                  section,
                  para,
 diff --git a/src/document_core/commands/text_editing.rs b/src/document_core/commands/text_editing.rs
-index 9f6f809d7..92cf5d645 100644
+index 9f6f809d7..2ab8692ed 100644
 --- a/src/document_core/commands/text_editing.rs
 +++ b/src/document_core/commands/text_editing.rs
 @@ -16,7 +16,8 @@ use crate::model::paragraph::{LineSeg, ParaMeta, Paragraph};
@@ -9098,6 +9148,46 @@ index 9f6f809d7..92cf5d645 100644
              cell_para,
              ParagraphBox::content_width_px(final_width, dpi),
              &styles,
+@@ -5861,6 +5869,7 @@ impl DocumentCore {
+         );
+ 
+         // 최외곽 표 dirty 마킹
++        self.reflow_table_ancestors_by_path(section_idx, parent_para_idx, path);
+         let outer_ctrl = path[0].0;
+         self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
+ 
+@@ -5922,6 +5931,7 @@ impl DocumentCore {
+             None,
+         );
+ 
++        self.reflow_table_ancestors_by_path(section_idx, parent_para_idx, path);
+         let outer_ctrl = path[0].0;
+         self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
+         self.document.sections[section_idx].raw_stream = None;
+@@ -6000,6 +6010,7 @@ impl DocumentCore {
+         self.reflow_cell_paragraph_by_path(section_idx, parent_para_idx, path, start_para);
+ 
+         // dirty/이벤트는 delete_text_in_cell_by_path 와 동형(최외곽 컨트롤 기준).
++        self.reflow_table_ancestors_by_path(section_idx, parent_para_idx, path);
+         let outer_ctrl = path[0].0;
+         self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
+         self.document.sections[section_idx].raw_stream = None;
+@@ -6102,6 +6113,7 @@ impl DocumentCore {
+             Some(cell_para_idx + 1),
+         );
+ 
++        self.reflow_table_ancestors_by_path(section_idx, parent_para_idx, path);
+         let outer_ctrl = path[0].0;
+         self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
+         self.document.sections[section_idx].raw_stream = None;
+@@ -6205,6 +6217,7 @@ impl DocumentCore {
+             None,
+         );
+ 
++        self.reflow_table_ancestors_by_path(section_idx, parent_para_idx, path);
+         let outer_ctrl = path[0].0;
+         self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
+         self.document.sections[section_idx].raw_stream = None;
 diff --git a/rhwp-studio/src/ui/cell-split-dialog.ts b/rhwp-studio/src/ui/cell-split-dialog.ts
 index a553abb60..6afb96e1b 100644
 --- a/rhwp-studio/src/ui/cell-split-dialog.ts
@@ -9118,3 +9208,67 @@ index a553abb60..6afb96e1b 100644
      this.colInput.className = 'dialog-input';
      this.colInput.style.width = '50px';
      this.colInput.min = '1';
+diff --git a/rhwp-studio/src/engine/input-handler-keyboard.ts b/rhwp-studio/src/engine/input-handler-keyboard.ts
+index 7fd48f994..6826d4379 100755
+--- a/rhwp-studio/src/engine/input-handler-keyboard.ts
++++ b/rhwp-studio/src/engine/input-handler-keyboard.ts
+@@ -197,6 +197,13 @@ function uniqueCellsInReadingOrder(bboxes: CellBbox[]): CellBbox[] {
+ }
+ 
+ function tableCellStartPosition(pos: DocumentPosition, cellIndex: number): DocumentPosition {
++  if (isNestedCellPosition(pos)) {
++    const path = pos.cellPath!.map(entry => ({ ...entry }));
++    path[path.length - 1] = { ...path[path.length - 1], cellIndex, cellParaIndex: 0 };
++    return { ...pos, paragraphIndex: 0, charOffset: 0, cursorRect: undefined,
++      controlIndex: path[0].controlIndex, cellIndex: path[0].cellIndex,
++      cellParaIndex: path[0].cellParaIndex, cellPath: path };
++  }
+   return {
+     sectionIndex: pos.sectionIndex,
+     paragraphIndex: 0,
+@@ -213,24 +220,31 @@ function insertRowAfterLastTableCellByTab(this: any): boolean {
+   const sec = pos.sectionIndex;
+   const ppi = pos.parentParaIndex;
+   const ci = pos.controlIndex;
+-  const currentCellIdx = pos.cellIndex;
++  const nested = isNestedCellPosition(pos);
++  const pathJson = nested ? JSON.stringify(pos.cellPath) : '';
++  const currentCellIdx = nested ? pos.cellPath![pos.cellPath!.length - 1].cellIndex : pos.cellIndex;
+   if (ppi === undefined || ci === undefined || currentCellIdx === undefined) return false;
+-  if (isNestedCellPosition(pos)) return false;
+ 
+   try {
+-    const order = uniqueCellsInReadingOrder(this.wasm.getTableCellBboxes(sec, ppi, ci));
++    const order = uniqueCellsInReadingOrder(nested
++      ? this.wasm.getTableCellBboxesByPath(sec, ppi, pathJson)
++      : this.wasm.getTableCellBboxes(sec, ppi, ci));
+     if (order.length === 0 || order[order.length - 1].cellIdx !== currentCellIdx) {
+       return false;
+     }
+ 
+-    const info = this.wasm.getCellInfo(sec, ppi, ci, currentCellIdx);
++    const info = nested ? this.wasm.getCellInfoByPath(sec, ppi, pathJson)
++      : this.wasm.getCellInfo(sec, ppi, ci, currentCellIdx);
+     const insertAfterRow = info.row + Math.max(1, info.rowSpan || 1) - 1;
+     this.executeOperation({
+       kind: 'snapshot',
+       operationType: 'insertTableRow',
+       operation: (wasm: WasmBridge) => {
+-        wasm.insertTableRow(sec, ppi, ci, insertAfterRow, true);
+-        const nextOrder = uniqueCellsInReadingOrder(wasm.getTableCellBboxes(sec, ppi, ci));
++        if (nested) wasm.insertTableRowByPath(sec, ppi, pathJson, insertAfterRow, true);
++        else wasm.insertTableRow(sec, ppi, ci, insertAfterRow, true);
++        const nextOrder = uniqueCellsInReadingOrder(nested
++          ? wasm.getTableCellBboxesByPath(sec, ppi, pathJson)
++          : wasm.getTableCellBboxes(sec, ppi, ci));
+         const insertedRow = insertAfterRow + 1;
+         const nextCell = nextOrder.find(cell => cell.row === insertedRow)
+           ?? nextOrder.find(cell => cell.row > insertAfterRow)
+@@ -1545,6 +1559,7 @@ export function onKeyDown(this: any, e: KeyboardEvent): void {
+         return;
+       }
+       if (this.cursor.isInCell() && !this.cursor.isInTextBox()) {
++        this.cursor.clearSelection();
+         if (e.shiftKey) {
+           this.cursor.moveToCellPrev();
+         } else if (insertRowAfterLastTableCellByTab.call(this)) {
