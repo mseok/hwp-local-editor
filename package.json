@@ -15,6 +15,7 @@
     "test:browser": "node tests/browser.mjs",
     "test:agent": "node tests/agent-browser.mjs",
     "test:complex": "node tests/complex-browser.mjs",
-    "test:format": "node tests/format-browser.mjs"
+    "test:format": "node tests/format-browser.mjs",
+    "test:nested": "node tests/nested-browser.mjs"
   }
 }

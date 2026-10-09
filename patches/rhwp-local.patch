@@ -1,5 +1,5 @@
 diff --git a/rhwp-studio/src/core/wasm-bridge.ts b/rhwp-studio/src/core/wasm-bridge.ts
-index 58162ba..7f6b000 100644
+index 58162bab6..2a756ed12 100644
 --- a/rhwp-studio/src/core/wasm-bridge.ts
 +++ b/rhwp-studio/src/core/wasm-bridge.ts
 @@ -10,6 +10,7 @@ import type { HyperlinkTarget, HyperlinkContext } from './hyperlink';
@@ -99,6 +99,18 @@ index 58162ba..7f6b000 100644
    /**
     * 플러그인 차용용 문서 핸들.
     *
+@@ -3782,9 +3822,9 @@ export class WasmBridge {
+    * cellContext 가 실리므로 호출자는 셀 좌표로 커서를 옮길 수 있어야 한다.
+    * 기본값은 종전대로 본문만 — 셀 이동을 못 하는 호출자가 무회귀로 남는다.
+    */
+-  searchText(query: string, fromSec: number, fromPara: number, fromChar: number, forward: boolean, caseSensitive: boolean, includeCells: boolean = false): import('./types').SearchResult {
++  searchText(query: string, fromSec: number, fromPara: number, fromChar: number, forward: boolean, caseSensitive: boolean, includeCells: boolean = false, fromCellPath: CellPathEntry[] = []): import('./types').SearchResult {
+     if (!this.doc || typeof (this.doc as any).searchText !== 'function') return { found: false };
+-    return JSON.parse((this.doc as any).searchText(query, fromSec, fromPara, fromChar, forward, caseSensitive, includeCells));
++    return JSON.parse((this.doc as any).searchText(query, fromSec, fromPara, fromChar, forward, caseSensitive, includeCells, JSON.stringify(fromCellPath)));
+   }
+ 
+   searchAllText(query: string, caseSensitive: boolean, includeCells: boolean = false): import('./types').SearchHit[] {
 diff --git a/rhwp-studio/src/main.ts b/rhwp-studio/src/main.ts
 index 91923c5..aaddd70 100644
 --- a/rhwp-studio/src/main.ts
@@ -6485,7 +6497,7 @@ index 2f0b5ae..0fb0243 100644
          w,
          "hh:breakSetting",
 diff --git a/src/wasm_api.rs b/src/wasm_api.rs
-index 2031085..9eb3f09 100644
+index 2031085e3..94b1b30b4 100644
 --- a/src/wasm_api.rs
 +++ b/src/wasm_api.rs
 @@ -189,6 +189,11 @@ fn render_page_to_canvas_filtered_with_profile_impl(
@@ -6582,6 +6594,27 @@ index 2031085..9eb3f09 100644
          renderer.show_paragraph_marks = self.show_paragraph_marks;
          renderer.show_control_codes = self.show_control_codes;
          renderer.set_scale(scale);
+@@ -5498,9 +5543,11 @@ impl HwpDocument {
+         forward: bool,
+         case_sensitive: bool,
+         include_cells: Option<bool>,
++        from_cell_path_json: Option<String>,
+     ) -> Result<String, JsValue> {
++        let path = from_cell_path_json.as_deref().map(parse_cell_path_arg).transpose()?;
+         self.core
+-            .search_text_native(
++            .search_text_at_path_native(
+                 query,
+                 from_sec as usize,
+                 from_para as usize,
+@@ -5509,6 +5556,7 @@ impl HwpDocument {
+                 case_sensitive,
+                 // [#3865] 미지정이면 종전 동작(본문만) — 인자를 6개만 넘기던 기존 호출자 무회귀.
+                 include_cells.unwrap_or(false),
++                path.as_deref(),
+             )
+             .map_err(|e| e.into())
+     }
 diff --git a/Cargo.toml b/Cargo.toml
 index a00248c..c98733e 100644
 --- a/Cargo.toml
@@ -6595,17 +6628,142 @@ index a00248c..c98733e 100644
      "CanvasPattern",
      "HtmlCanvasElement",
 diff --git a/rhwp-studio/src/ui/find-dialog.ts b/rhwp-studio/src/ui/find-dialog.ts
-index 6407dd3bb..f1f2e61fc 100644
+index 6407dd3bb..da7e3717f 100644
 --- a/rhwp-studio/src/ui/find-dialog.ts
 +++ b/rhwp-studio/src/ui/find-dialog.ts
-@@ -26,6 +26,7 @@ export function navigateToSearchHit(ih: ReturnType<CommandServices['getInputHand
-         controlIndex: cell.ctrlIdx,
-         cellIndex: cell.cellIdx,
-         cellParaIndex: cell.cellPara,
-+        cellPath: [{ controlIndex: cell.ctrlIdx, cellIndex: cell.cellIdx, cellParaIndex: cell.cellPara }],
+@@ -1,5 +1,5 @@
+ import type { CommandServices } from '@/command/types';
+-import type { SearchResult, ReplaceResult, ReplaceAllResult } from '@/core/types';
++import type { SearchResult, ReplaceResult, ReplaceAllResult, CellPathEntry } from '@/core/types';
+ 
+ import { t } from '../i18n/index.ts';
+ export type FindMode = 'find' | 'replace';
+@@ -16,16 +16,18 @@ export type FindMode = 'find' | 'replace';
+ export function navigateToSearchHit(ih: ReturnType<CommandServices['getInputHandler']>, hit: SearchResult): void {
+   if (!ih || !hit.found) return;
+ 
+-  const cell = hit.cellContext;
+-  const startPos = cell
++  const path = searchHitPath(hit);
++  const outer = path[0];
++  const startPos = outer
+     ? {
+         sectionIndex: hit.sec!,
+-        paragraphIndex: cell.parentPara,
++        paragraphIndex: hit.para!,
+         charOffset: hit.charOffset!,
+-        parentParaIndex: cell.parentPara,
+-        controlIndex: cell.ctrlIdx,
+-        cellIndex: cell.cellIdx,
+-        cellParaIndex: cell.cellPara,
++        parentParaIndex: hit.para!,
++        controlIndex: outer.controlIndex,
++        cellIndex: outer.cellIndex,
++        cellParaIndex: outer.cellParaIndex,
++        cellPath: path,
        }
      : {
          sectionIndex: hit.sec!,
+@@ -36,7 +38,7 @@ export function navigateToSearchHit(ih: ReturnType<CommandServices['getInputHand
+ 
+   // 선택 영역으로 하이라이트: anchor → start, cursor → end
+   const cursor = (ih as any).cursor;
+-  if (cell) {
++  if (outer) {
+     // moveCursorTo 의 사전 검증은 본문 좌표만 본다(getCursorRect). 셀 위치를 넘기면
+     // 바깥 문단을 검사해 엉뚱하게 거절될 수 있으므로, 셀 매치는 커서를 직접 옮긴다 —
+     // rhwpDev.goto 가 이미 쓰는 경로다.
+@@ -53,6 +55,12 @@ export function navigateToSearchHit(ih: ReturnType<CommandServices['getInputHand
+   (ih as any).updateCaret?.();
+ }
+ 
++function searchHitPath(hit: SearchResult): CellPathEntry[] {
++  if (hit.cellPath?.length) return hit.cellPath;
++  const cell = hit.cellContext;
++  return cell ? [{ controlIndex: cell.ctrlIdx, cellIndex: cell.cellIdx, cellParaIndex: cell.cellPara }] : [];
++}
++
+ /**
+  * 찾기/찾아바꾸기 모달리스 대화상자
+  *
+@@ -60,6 +68,7 @@ export function navigateToSearchHit(ih: ReturnType<CommandServices['getInputHand
+  */
+ export class FindDialog {
+   static lastQuery = '';
++  static lastReplacement = '';
+   static lastCaseSensitive = false;
+ 
+   private _open = false;
+@@ -100,6 +109,7 @@ export class FindDialog {
+     this.build();
+     document.body.appendChild(this.wrap);
+     this.queryInput.value = FindDialog.lastQuery;
++    this.replaceInput.value = FindDialog.lastReplacement;
+     this.caseSensitiveCheck.checked = FindDialog.lastCaseSensitive;
+     this.applyMode();
+     this.installKeyCaptureHandler();
+@@ -120,6 +130,7 @@ export class FindDialog {
+   }
+ 
+   hide(): void {
++    FindDialog.lastReplacement = this.replaceInput.value;
+     this._open = false;
+     this.queryComposing = false;
+     this.pendingSearchDirection = null;
+@@ -393,13 +404,15 @@ export class FindDialog {
+     // 역방향 검색 시: 현재 선택 영역의 시작 위치를 기준으로 해야
+     // 현재 매치를 건너뛰고 이전 매치를 찾을 수 있다.
+     let fromSec = pos.sectionIndex;
+-    let fromPara = pos.paragraphIndex;
++    let fromPara = pos.parentParaIndex ?? pos.paragraphIndex;
+     let fromChar = pos.charOffset;
++    let fromPath = pos.cellPath ?? [];
+ 
+     if (!forward && this.currentHit?.found) {
+       fromSec = this.currentHit.sec!;
+       fromPara = this.currentHit.para!;
+       fromChar = this.currentHit.charOffset!;
++      fromPath = searchHitPath(this.currentHit);
+     }
+ 
+     const hadHit = Boolean(this.currentHit?.found);
+@@ -413,6 +426,7 @@ export class FindDialog {
+       // [#3865] 표 셀 안 텍스트도 찾는다. 아래 navigateToHit 이 cellContext 를 셀 좌표로
+       // 옮길 수 있으므로 켤 수 있다 — 못 옮기면 "찾았다는데 화면은 안 움직임"이 된다.
+       true,
++      fromPath,
+     );
+ 
+     if (result.found) {
+@@ -483,6 +497,19 @@ export class FindDialog {
+     // 엉뚱한 곳이 손상된다. 찾기가 셀 매치를 반환하기 시작했으니 여기도 함께 갈라야 한다.
+     const cell = hit.cellContext;
+     const applyReplace = (wasm: typeof this.services.wasm): ReplaceResult => {
++      if (hit.cellPath?.length) {
++        const pathJson = JSON.stringify(hit.cellPath);
++        const para = hit.cellPath[hit.cellPath.length - 1].cellParaIndex;
++        return wasm.runInBatch(() => {
++          const deleted = JSON.parse(wasm.deleteRangeInCellByPath(
++            hit.sec!, hit.para!, pathJson, para, hit.charOffset!, para, hit.charOffset! + hit.length!,
++          ));
++          if (!deleted.ok) throw new Error('중첩 셀의 검색 결과를 삭제하지 못했습니다');
++          const inserted = JSON.parse(wasm.insertTextInCellByPath(hit.sec!, hit.para!, pathJson, hit.charOffset!, newText));
++          if (!inserted.ok) throw new Error('중첩 셀의 검색 결과를 바꾸지 못했습니다');
++          return { ok: true };
++        });
++      }
+       if (cell) {
+         const r = wasm.replaceTextInCellDeferredPagination(
+           hit.sec!, cell.parentPara, cell.ctrlIdx, cell.cellIdx, cell.cellPara,
+@@ -500,7 +527,7 @@ export class FindDialog {
+     if (ih) {
+       ih.executeOperation({ kind: 'snapshot', operationType: 'replaceText', operation: (wasm) => {
+         result = applyReplace(wasm);
+-        return ih.getCursorPosition();
++        return result.ok ? { ...ih.getCursorPosition(), charOffset: hit.charOffset! + [...newText].length } : null;
+       }});
+     } else {
+       result = applyReplace(this.services.wasm);
 diff --git a/rhwp-studio/src/ui/table-row-column-dialog.ts b/rhwp-studio/src/ui/table-row-column-dialog.ts
 index dffc08cd0..7e8bd19b5 100644
 --- a/rhwp-studio/src/ui/table-row-column-dialog.ts
@@ -6833,3 +6991,111 @@ index 8e99cf288..b5ef6b681 100644
      // 표/셀 속성 변경도 undo 대상이다 — 편집 라우터를 통과시켜 스냅샷으로
      // 기록한다 (#1320 계약, picture-props-dialog(#2027)와 동일 패턴).
      // services 미주입 환경에서만 직접 적용 fallback.
+
+diff --git a/src/document_core/queries/search_query.rs b/src/document_core/queries/search_query.rs
+index df458646c..11306e4d9 100644
+--- a/src/document_core/queries/search_query.rs
++++ b/src/document_core/queries/search_query.rs
+@@ -342,6 +342,23 @@ impl DocumentCore {
+         forward: bool,
+         case_sensitive: bool,
+         include_cells: bool,
++    ) -> Result<String, HwpError> {
++        self.search_text_at_path_native(
++            query, from_sec, from_para, from_char, forward, case_sensitive, include_cells, None,
++        )
++    }
++
++    /// Path-aware callers can select nested ordinary table text without falling back to body coordinates.
++    pub fn search_text_at_path_native(
++        &self,
++        query: &str,
++        from_sec: usize,
++        from_para: usize,
++        from_char: usize,
++        forward: bool,
++        case_sensitive: bool,
++        include_cells: bool,
++        from_path: Option<&[(usize, usize, usize)]>,
+     ) -> Result<String, HwpError> {
+         if query.is_empty() {
+             return Ok(r#"{"found":false}"#.to_string());
+@@ -362,22 +379,15 @@ impl DocumentCore {
+         // (parentPara·ctrlIdx·cellIdx·cellPara)로 따로 실린다. 그래서 아래 전/후 판정은
+         // 셀 히트에서도 그대로 성립한다(표가 놓인 문단 기준으로 정렬된다).
+         let body_hits: Vec<&SearchHit> = if include_cells {
+-            // Find/F3가 이동·치환할 수 있는 것은 표 셀의 일반 텍스트뿐이다. 글상자와
+-            // 수식은 `cellContext`만으로는 표와 구분하거나 안전하게 편집할 수 없으므로
+-            // 기존 제외 범위를 유지한다.
+-            //
+-            // [#2792] 중첩 셀(깊이 ≥2)도 여기서는 제외한다. 그 히트는 결과 JSON 에
+-            // `cellContext` 대신 `cellPath` 로 실리는데, 호출자(studio find-dialog)는
+-            // `cellContext` 가 없으면 **본문 좌표 분기**로 떨어져 표가 놓인 바깥 문단을
+-            // 고친다 — #3865 가 경고한 바로 그 손상이다. 이동·단건 치환이 path 를 받게
+-            // 되면(이슈의 경로 기반 선택 축) 이 조건만 풀면 된다. 전체 치환
+-            // (`replace_all_native`)은 이 필터를 타지 않으므로 이미 중첩까지 고친다.
++            // Legacy callers still receive only flat cells. Path-aware callers also receive nested cells.
++            // Text boxes and equations require separate editing routes and stay excluded.
+             all_hits
+                 .iter()
+                 .filter(|h| {
+                     !h.is_text_box
+                         && h.equation_control.is_none()
+-                        && h.cell_context.as_ref().is_none_or(|cell| cell.depth() == 1)
++                        && (from_path.is_some()
++                            || h.cell_context.as_ref().is_none_or(|cell| cell.depth() == 1))
+                 })
+                 .collect()
+         } else {
+@@ -391,6 +401,32 @@ impl DocumentCore {
+         }
+         let total_match_count = body_hits.len();
+ 
++        if let Some(path) = from_path {
++            let relative_position = |hit: &&SearchHit| {
++                let hit_path = hit.cell_context.as_ref().map(|cell| cell.path.as_slice()).unwrap_or(&[]);
++                (hit.sec, hit.para, hit_path).cmp(&(from_sec, from_para, path))
++            };
++            let next = if forward {
++                body_hits.iter().find(|hit| {
++                    let order = relative_position(hit);
++                    order.is_gt() || (order.is_eq() && hit.char_offset >= from_char)
++                })
++            } else {
++                body_hits.iter().rev().find(|hit| {
++                    let order = relative_position(hit);
++                    order.is_lt() || (order.is_eq() && hit.char_offset < from_char)
++                })
++            };
++            return Ok(match next {
++                Some(hit) => format_search_hit(hit, false, total_match_count),
++                None => format_search_hit(
++                    if forward { body_hits[0] } else { body_hits[body_hits.len() - 1] },
++                    true,
++                    total_match_count,
++                ),
++            });
++        }
++
+         if forward {
+             let after = body_hits.iter().find(|h| {
+                 h.sec > from_sec
+
+diff --git a/rhwp-studio/src/command/commands/edit.ts b/rhwp-studio/src/command/commands/edit.ts
+index 609d0525d..2fff61ba4 100644
+--- a/rhwp-studio/src/command/commands/edit.ts
++++ b/rhwp-studio/src/command/commands/edit.ts
+@@ -154,11 +154,12 @@ export const editCommands: CommandDef[] = [
+         if (!ih) return;
+         const pos = ih.getCursorPosition();
+         const result = services.wasm.searchText(
+-          FindDialog.lastQuery, pos.sectionIndex, pos.paragraphIndex,
++          FindDialog.lastQuery, pos.sectionIndex, pos.parentParaIndex ?? pos.paragraphIndex,
+           pos.charOffset, true, FindDialog.lastCaseSensitive,
+           // [#3865] 대화상자와 같은 범위를 본다 — 한쪽만 셀을 다루면 같은 문서에서
+           // Ctrl+F 는 표 안을 찾는데 F3 는 못 찾는 상태가 된다.
+           true,
++          pos.cellPath ?? [],
+         );
+         // 이동 규칙도 대화상자와 공유한다(셀 매치는 셀 좌표로 간다).
+         navigateToSearchHit(ih, result);
