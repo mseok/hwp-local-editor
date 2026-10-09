@@ -83,6 +83,7 @@ export const LOCAL_JOURNAL_METHODS = new Set([
   "resizeTableCells",
   "resizeTableCellsByPath",
   "moveTableOffset",
+  "moveTableOffsetByPath",
   "setTableProperties",
   "setTablePropertiesByPath",
   "deleteTableControl",

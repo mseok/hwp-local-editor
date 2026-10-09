@@ -1,5 +1,5 @@
 diff --git a/rhwp-studio/src/core/wasm-bridge.ts b/rhwp-studio/src/core/wasm-bridge.ts
-index 58162bab6..a64f39122 100644
+index 58162bab6..a8114ff4d 100644
 --- a/rhwp-studio/src/core/wasm-bridge.ts
 +++ b/rhwp-studio/src/core/wasm-bridge.ts
 @@ -10,6 +10,7 @@ import type { HyperlinkTarget, HyperlinkContext } from './hyperlink';
@@ -123,7 +123,23 @@ index 58162bab6..a64f39122 100644
    getCellOwnProperties(sec: number, parentPara: number, controlIdx: number, cellIdx: number): CellProperties {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      const doc = this.doc as unknown as {
-@@ -2064,6 +2114,16 @@ export class WasmBridge {
+@@ -2054,16 +2104,31 @@ export class WasmBridge {
+     );
+   }
+ 
+-  moveTableOffset(sec: number, parentPara: number, controlIdx: number, deltaH: number, deltaV: number): { ok: boolean; ppi: number; ci: number } {
++  moveTableOffset(sec: number, parentPara: number, controlIdx: number, deltaH: number, deltaV: number): { ok: boolean; ppi: number; ci: number; cellPath?: CellPathEntry[] } {
+     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
+     return JSON.parse(this.doc.moveTableOffset(sec, parentPara, controlIdx, deltaH, deltaV));
+   }
+ 
++  moveTableOffsetByPath(sec: number, parentPara: number, cellPath: CellPathEntry[], deltaH: number, deltaV: number): { ok: boolean; ppi: number; ci: number; cellPath?: CellPathEntry[] } {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse((this.doc as any).moveTableOffsetByPath(sec, parentPara, JSON.stringify(cellPath), deltaH, deltaV));
++  }
++
+   getTableProperties(sec: number, parentPara: number, controlIdx: number): TableProperties {
+     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      return JSON.parse(this.doc.getTableProperties(sec, parentPara, controlIdx));
    }
  
@@ -140,7 +156,7 @@ index 58162bab6..a64f39122 100644
    getTableSignature(sec: number, parentPara: number, controlIdx: number): string {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      const d = this.doc as unknown as { getTableSignature?: (a: number, b: number, c: number) => string };
-@@ -2078,6 +2138,26 @@ export class WasmBridge {
+@@ -2078,6 +2143,26 @@ export class WasmBridge {
      return JSON.parse(this.doc.setTableProperties(sec, parentPara, controlIdx, JSON.stringify(props)));
    }
  
@@ -167,7 +183,7 @@ index 58162bab6..a64f39122 100644
    mergeTableCells(sec: number, parentPara: number, controlIdx: number, startRow: number, startCol: number, endRow: number, endCol: number): { ok: boolean; cellCount: number } {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      return JSON.parse(this.doc.mergeTableCells(sec, parentPara, controlIdx, startRow, startCol, endRow, endCol));
-@@ -2182,6 +2262,36 @@ export class WasmBridge {
+@@ -2182,6 +2267,36 @@ export class WasmBridge {
      return JSON.parse(this.doc.mergeTableWithNext(sec, parentPara, controlIdx));
    }
  
@@ -204,7 +220,7 @@ index 58162bab6..a64f39122 100644
    insertTableRow(sec: number, parentPara: number, controlIdx: number, rowIdx: number, below: boolean): { ok: boolean; rowCount: number; colCount: number } {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      return JSON.parse(this.doc.insertTableRow(sec, parentPara, controlIdx, rowIdx, below));
-@@ -3782,9 +3892,9 @@ export class WasmBridge {
+@@ -3782,9 +3897,9 @@ export class WasmBridge {
     * cellContext 가 실리므로 호출자는 셀 좌표로 커서를 옮길 수 있어야 한다.
     * 기본값은 종전대로 본문만 — 셀 이동을 못 하는 호출자가 무회귀로 남는다.
     */
@@ -6959,7 +6975,7 @@ index 2f0b5ae..0fb0243 100644
          w,
          "hh:breakSetting",
 diff --git a/src/wasm_api.rs b/src/wasm_api.rs
-index 2031085e3..5bfe606d6 100644
+index 2031085e3..bab55cf06 100644
 --- a/src/wasm_api.rs
 +++ b/src/wasm_api.rs
 @@ -189,6 +189,11 @@ fn render_page_to_canvas_filtered_with_profile_impl(
@@ -7302,10 +7318,27 @@ index 2031085e3..5bfe606d6 100644
      #[wasm_bindgen(js_name = setCellProperties)]
      pub fn set_cell_properties(
          &mut self,
-@@ -3533,6 +3779,19 @@ impl HwpDocument {
+@@ -3530,9 +3776,34 @@ impl HwpDocument {
+         .map_err(|e| e.into())
+     }
+ 
++    #[wasm_bindgen(js_name = moveTableOffsetByPath)]
++    pub fn move_table_offset_by_path(
++        &mut self,
++        section_idx: u32,
++        parent_para_idx: u32,
++        cell_path_json: &str,
++        delta_h: i32,
++        delta_v: i32,
++    ) -> Result<String, JsValue> {
++        let path = parse_cell_path_arg(cell_path_json)?;
++        self.move_table_offset_by_cell_path_native(section_idx as usize, parent_para_idx as usize, &path, delta_h, delta_v)
++            .map_err(|e| e.into())
++    }
++
      /// 표 속성을 조회한다.
-     ///
-     /// 반환: JSON `{cellSpacing, paddingLeft, paddingRight, paddingTop, paddingBottom, pageBreak, repeatHeader}`
+-    ///
+-    /// 반환: JSON `{cellSpacing, paddingLeft, paddingRight, paddingTop, paddingBottom, pageBreak, repeatHeader}`
 +    #[wasm_bindgen(js_name = getTablePropertiesByPath)]
 +    pub fn get_table_properties_by_path(
 +        &self,
@@ -7322,7 +7355,7 @@ index 2031085e3..5bfe606d6 100644
      #[wasm_bindgen(js_name = getTableProperties)]
      pub fn get_table_properties(
          &self,
-@@ -3551,6 +3810,20 @@ impl HwpDocument {
+@@ -3551,6 +3822,20 @@ impl HwpDocument {
      /// 표 속성을 수정한다.
      ///
      /// 반환: JSON `{"ok":true}`
@@ -7343,7 +7376,7 @@ index 2031085e3..5bfe606d6 100644
      #[wasm_bindgen(js_name = setTableProperties)]
      pub fn set_table_properties(
          &mut self,
-@@ -5498,9 +5771,11 @@ impl HwpDocument {
+@@ -5498,9 +5783,11 @@ impl HwpDocument {
          forward: bool,
          case_sensitive: bool,
          include_cells: Option<bool>,
@@ -7356,7 +7389,7 @@ index 2031085e3..5bfe606d6 100644
                  query,
                  from_sec as usize,
                  from_para as usize,
-@@ -5509,6 +5784,7 @@ impl HwpDocument {
+@@ -5509,6 +5796,7 @@ impl HwpDocument {
                  case_sensitive,
                  // [#3865] 미지정이면 종전 동작(본문만) — 인자를 6개만 넘기던 기존 호출자 무회귀.
                  include_cells.unwrap_or(false),
@@ -8078,10 +8111,29 @@ index c6de9bdb5..bd5c15c98 100644
    },
    {
 diff --git a/rhwp-studio/src/engine/input-handler.ts b/rhwp-studio/src/engine/input-handler.ts
-index 043ee77ee..1650b0c61 100644
+index 043ee77ee..5e62d0b49 100644
 --- a/rhwp-studio/src/engine/input-handler.ts
 +++ b/rhwp-studio/src/engine/input-handler.ts
-@@ -4859,6 +4859,8 @@ export class InputHandler {
+@@ -19,6 +19,7 @@ import { VirtualScroll } from '@/view/virtual-scroll';
+ import { ViewportManager } from '@/view/viewport-manager';
+ import type {
+   DocumentPosition,
++  CellPathEntry,
+   CharProperties,
+   ParaProperties,
+   CursorRect,
+@@ -410,8 +411,9 @@ export class InputHandler {
+   // 표 이동 드래그 상태
+   private isMoveDragging = false;
+   private moveDragState: {
+-    tableRef: { sec: number; ppi: number; ci: number };
++    tableRef: { sec: number; ppi: number; ci: number; cellPath?: CellPathEntry[] };
+     startPpi: number;  // 드래그 시작 시 ppi (Undo용)
++    startCellPath?: CellPathEntry[];
+     startPageX: number;
+     startPageY: number;
+     lastPageX: number;
+@@ -4859,6 +4861,8 @@ export class InputHandler {
    /** 현재 커서 위치를 반환한다 */
    getCursorPosition(): DocumentPosition { return this.cursor.getPosition(); }
  
@@ -8090,7 +8142,7 @@ index 043ee77ee..1650b0c61 100644
    /** 별도 좌표계·개체 선택을 본문 링크 편집으로 오인하지 않도록 명시적으로 차단한다. */
    canEditHyperlink(): boolean {
      return !this.cursor.isInHeaderFooter() && !this.cursor.isInFootnote()
-@@ -5604,18 +5606,7 @@ export class InputHandler {
+@@ -5604,18 +5608,7 @@ export class InputHandler {
      if (this.cursor.isInTableObjectSelection()) {
        const ref = this.cursor.getSelectedTableRef();
        if (!ref) return;
@@ -8110,7 +8162,7 @@ index 043ee77ee..1650b0c61 100644
        return;
      }
      if (this.cursor.hasSelection()) {
-@@ -5623,6 +5614,44 @@ export class InputHandler {
+@@ -5623,6 +5616,44 @@ export class InputHandler {
      }
    }
  
@@ -8528,10 +8580,10 @@ index 609d0525d..2fff61ba4 100644
          // 이동 규칙도 대화상자와 공유한다(셀 매치는 셀 좌표로 간다).
          navigateToSearchHit(ih, result);
 diff --git a/src/document_core/commands/table_ops.rs b/src/document_core/commands/table_ops.rs
-index 7c31daa4c..39529780d 100644
+index 7c31daa4c..eae4fd004 100644
 --- a/src/document_core/commands/table_ops.rs
 +++ b/src/document_core/commands/table_ops.rs
-@@ -42,6 +42,300 @@ struct CellResizeUpdate {
+@@ -42,6 +42,395 @@ struct CellResizeUpdate {
  const LOCAL_RESIZE_UNSUPPORTED: &str =
      "행\u{b7}열별 독립 셀 경계는 HWP/HWPX에 편집 의도를 저장할 수 없어 지원하지 않습니다";
  
@@ -8544,6 +8596,101 @@ index 7c31daa4c..39529780d 100644
 +        Some(Control::Table(table)) => Ok(table),
 +        _ => Err(HwpError::RenderError("지정된 문단의 컨트롤이 표가 아닙니다".to_string())),
 +    }
++}
++
++fn move_table_paragraphs(
++    paragraphs: &mut [crate::model::paragraph::Paragraph],
++    parent_para_idx: usize,
++    control_idx: usize,
++    delta_h: i32,
++    delta_v: i32,
++    use_moving_line_height: bool,
++) -> Result<usize, HwpError> {
++    let table = table_in_paragraphs_mut(paragraphs, parent_para_idx, control_idx)?;
++
++    let is_treat_as_char = (table.attr & 0x01) != 0;
++
++    // [#6388] 현재 오프셋은 `common` 에서 읽는다 — 종전에는 raw 에서 읽어서 raw 가 빈
++    // 표(HWPX 파스본)를 다루려면 0 확장이 필요했고, 그 확장이 저장 경로를 파괴했다.
++    // `common` 이 정본으로 안전한 근거: 파스본 표 6708개에서 raw V/H_OFFSET 과
++    // `common.vertical_offset`/`horizontal_offset` 불일치가 0건이다(실측).
++    // 쓰기는 `common` 에 하고 raw 에는 길이가 허락할 때만 덧쓴다(dual-write 유지).
++
++    // vertical_offset: CommonObjAttr::V_OFFSET (i32 LE)
++    let mut new_v = if delta_v != 0 {
++        let nv = (table.common.vertical_offset as i32).wrapping_add(delta_v);
++        table.common.vertical_offset = nv as u32;
++        patch_raw_ctrl_field(
++            &mut table.raw_ctrl_data,
++            common_obj_offsets::V_OFFSET,
++            &nv.to_le_bytes(),
++        );
++        nv
++    } else {
++        table.common.vertical_offset as i32
++    };
++
++    // horizontal_offset: CommonObjAttr::H_OFFSET (i32 LE)
++    if delta_h != 0 {
++        let new_h = (table.common.horizontal_offset as i32).wrapping_add(delta_h);
++        table.common.horizontal_offset = new_h as u32;
++        patch_raw_ctrl_field(
++            &mut table.raw_ctrl_data,
++            common_obj_offsets::H_OFFSET,
++            &new_h.to_le_bytes(),
++        );
++    }
++
++    // treat_as_char 표: 문단 경계를 넘으면 문단 이동 (다중 경계 루프)
++    let mut result_ppi = parent_para_idx;
++    if is_treat_as_char && delta_v != 0 {
++        let para_count = paragraphs.len();
++
++        // 아래로: v_offset >= line_height이면 반복적으로 다음 문단과 교환
++        while result_ppi + 1 < para_count {
++            let lh = paragraphs[result_ppi]
++                .line_segs
++                .first()
++                .map(|ls| ls.line_height)
++                .unwrap_or(1000);
++            if new_v < lh {
++                break;
++            }
++            new_v -= lh;
++            paragraphs
++                .swap(result_ppi, result_ppi + 1);
++            result_ppi += 1;
++        }
++
++        // 위로: v_offset < 0이면 반복적으로 이전 문단과 교환
++        while new_v < 0 && result_ppi > 0 {
++            // Cell moves must reverse the downward host-height subtraction.
++            // Root tables retain their existing previous-paragraph behavior.
++            let height_idx = if use_moving_line_height { result_ppi } else { result_ppi - 1 };
++            let prev_lh = paragraphs[height_idx]
++                .line_segs
++                .first()
++                .map(|ls| ls.line_height)
++                .unwrap_or(1000);
++            new_v += prev_lh;
++            paragraphs
++                .swap(result_ppi - 1, result_ppi);
++            result_ppi -= 1;
++        }
++
++        // 최종 v_offset 갱신
++        if result_ppi != parent_para_idx {
++            let tbl = table_in_paragraphs_mut(paragraphs, result_ppi, control_idx)?;
++            tbl.common.vertical_offset = new_v as u32;
++            patch_raw_ctrl_field(
++                &mut tbl.raw_ctrl_data,
++                common_obj_offsets::V_OFFSET,
++                &new_v.to_le_bytes(),
++            );
++        }
++    }
++
++    Ok(result_ppi)
 +}
 +
 +fn split_table_paragraphs(
@@ -8832,7 +8979,7 @@ index 7c31daa4c..39529780d 100644
  impl DocumentCore {
      pub(crate) fn get_table_mut(
          &mut self,
-@@ -78,22 +372,45 @@ impl DocumentCore {
+@@ -78,22 +467,45 @@ impl DocumentCore {
          row_idx: u16,
          below: bool,
      ) -> Result<String, HwpError> {
@@ -8888,7 +9035,7 @@ index 7c31daa4c..39529780d 100644
          Ok(super::super::helpers::json_ok_with(&format!(
              "\"rowCount\":{},\"colCount\":{}",
              row_count, col_count
-@@ -109,22 +426,45 @@ impl DocumentCore {
+@@ -109,22 +521,45 @@ impl DocumentCore {
          col_idx: u16,
          right: bool,
      ) -> Result<String, HwpError> {
@@ -8944,7 +9091,7 @@ index 7c31daa4c..39529780d 100644
          Ok(super::super::helpers::json_ok_with(&format!(
              "\"rowCount\":{},\"colCount\":{}",
              row_count, col_count
-@@ -139,22 +479,43 @@ impl DocumentCore {
+@@ -139,22 +574,43 @@ impl DocumentCore {
          control_idx: usize,
          row_idx: u16,
      ) -> Result<String, HwpError> {
@@ -8998,7 +9145,7 @@ index 7c31daa4c..39529780d 100644
          Ok(super::super::helpers::json_ok_with(&format!(
              "\"rowCount\":{},\"colCount\":{}",
              row_count, col_count
-@@ -169,28 +530,111 @@ impl DocumentCore {
+@@ -169,28 +625,111 @@ impl DocumentCore {
          control_idx: usize,
          col_idx: u16,
      ) -> Result<String, HwpError> {
@@ -9120,7 +9267,7 @@ index 7c31daa4c..39529780d 100644
      /// 표를 지정 행에서 두 개로 나눈다 (한컴 [표-표 나누기], table(dividing).htm).
      ///
      /// `at_row` 행부터 새 표가 시작된다. 첫 행(0)에서는 한컴과 동일하게 거부한다.
-@@ -203,168 +647,14 @@ impl DocumentCore {
+@@ -203,168 +742,14 @@ impl DocumentCore {
          control_idx: usize,
          at_row: u16,
      ) -> Result<String, HwpError> {
@@ -9294,10 +9441,12 @@ index 7c31daa4c..39529780d 100644
          if inherit_text_reflow {
              self.mark_table_text_reflowed_after_edit(section_idx, parent_para_idx + 2, 0)?;
          }
-@@ -416,131 +706,19 @@ impl DocumentCore {
+@@ -414,133 +799,21 @@ impl DocumentCore {
+         &mut self,
+         section_idx: usize,
          parent_para_idx: usize,
-         control_idx: usize,
-     ) -> Result<String, HwpError> {
+-        control_idx: usize,
+-    ) -> Result<String, HwpError> {
 -        use crate::model::control::Control;
 -
 -        // 1) 다음 표 위치 탐색 — 사이에는 빈 문단만 허용.
@@ -9361,15 +9510,10 @@ index 7c31daa4c..39529780d 100644
 -            }
 -            found.ok_or_else(|| HwpError::RenderError("붙일 다음 표가 없습니다".to_string()))?
 -        };
-+        let (back_para_idx, back_ctrl_idx, _, _) = find_next_table(
-+            &self.document.sections.get(section_idx)
-+                .ok_or_else(|| HwpError::RenderError("구역 인덱스 범위 초과".to_string()))?.paragraphs,
-+            parent_para_idx,
-+        )?;
-         let merged_text_reflow =
-             self.table_text_reflowed_path_exists(section_idx, parent_para_idx, control_idx)
-                 || self.table_text_reflowed_path_exists(section_idx, back_para_idx, back_ctrl_idx);
- 
+-        let merged_text_reflow =
+-            self.table_text_reflowed_path_exists(section_idx, parent_para_idx, control_idx)
+-                || self.table_text_reflowed_path_exists(section_idx, back_para_idx, back_ctrl_idx);
+-
 -        // 2) 남은 검증을 문서 변형 전에 끝낸다 — 여기서 실패하면 문서는 그대로다.
 -        //    (뒤 표를 먼저 remove 하면 실패 경로에서 뒤 표가 소실된다.)
 -        let front_rows = self
@@ -9423,7 +9567,17 @@ index 7c31daa4c..39529780d 100644
 -            table.rebuild_grid();
 -            table.update_ctrl_dimensions();
 -        }
--
++        control_idx: usize,
++    ) -> Result<String, HwpError> {
++        let (back_para_idx, back_ctrl_idx, _, _) = find_next_table(
++            &self.document.sections.get(section_idx)
++                .ok_or_else(|| HwpError::RenderError("구역 인덱스 범위 초과".to_string()))?.paragraphs,
++            parent_para_idx,
++        )?;
++        let merged_text_reflow =
++            self.table_text_reflowed_path_exists(section_idx, parent_para_idx, control_idx)
++                || self.table_text_reflowed_path_exists(section_idx, back_para_idx, back_ctrl_idx);
+ 
 -        // 5) 사이 빈 문단들과 뒤 표 host 문단 제거.
 -        self.document.sections[section_idx]
 -            .paragraphs
@@ -9435,7 +9589,7 @@ index 7c31daa4c..39529780d 100644
          if merged_text_reflow {
              self.mark_table_text_reflowed_after_edit(section_idx, parent_para_idx, control_idx)?;
          }
-@@ -574,10 +752,232 @@ impl DocumentCore {
+@@ -574,10 +847,232 @@ impl DocumentCore {
          });
          Ok(super::super::helpers::json_ok_with(&format!(
              "\"rowCount\":{}",
@@ -9669,7 +9823,7 @@ index 7c31daa4c..39529780d 100644
      /// 표 셀을 병합한다 (네이티브).
      pub fn merge_table_cells_native(
          &mut self,
-@@ -1269,6 +1669,19 @@ impl DocumentCore {
+@@ -1269,6 +1764,19 @@ impl DocumentCore {
          control_idx: usize,
          cell_idx: usize,
          json: &str,
@@ -9689,7 +9843,7 @@ index 7c31daa4c..39529780d 100644
      ) -> Result<String, HwpError> {
          let parsed: serde_json::Value =
              serde_json::from_str(json).unwrap_or(serde_json::Value::Null);
-@@ -1304,7 +1717,7 @@ impl DocumentCore {
+@@ -1304,7 +1812,7 @@ impl DocumentCore {
              Some(self.normalize_cell_border_fill_json_for_edit(
                  section_idx,
                  parent_para_idx,
@@ -9698,7 +9852,7 @@ index 7c31daa4c..39529780d 100644
                  cell_idx,
                  json,
              ))
-@@ -1327,7 +1740,7 @@ impl DocumentCore {
+@@ -1327,7 +1835,7 @@ impl DocumentCore {
              let mut needs_reflow = false;
              let mut size_changed = false;
              let mut width_changed = false;
@@ -9707,7 +9861,7 @@ index 7c31daa4c..39529780d 100644
              let original_width = table.common.width;
              let direct_border_fill_id = if has_border_fill_change {
                  None
-@@ -1422,12 +1835,14 @@ impl DocumentCore {
+@@ -1422,12 +1930,14 @@ impl DocumentCore {
          if needs_reflow {
              let para_count = reflow_para_count;
              for cell_para_idx in 0..para_count {
@@ -9728,7 +9882,7 @@ index 7c31daa4c..39529780d 100644
                  );
              }
          }
-@@ -1465,7 +1880,7 @@ impl DocumentCore {
+@@ -1465,7 +1975,7 @@ impl DocumentCore {
  
              // 대상 셀 정보 추출 + border_fill_id 변경
              let (target_row, target_col, target_col_span, target_row_span) = {
@@ -9737,7 +9891,7 @@ index 7c31daa4c..39529780d 100644
                  let (row, col, col_span, row_span) = {
                      let cell = table.cells.get_mut(cell_idx).ok_or_else(|| {
                          HwpError::RenderError(format!("셀 인덱스 {} 범위 초과", cell_idx))
-@@ -1510,10 +1925,10 @@ impl DocumentCore {
+@@ -1510,10 +2020,10 @@ impl DocumentCore {
  
              // 이웃 셀의 공유 엣지 테두리를 갱신
              // borders 배열: [좌(0), 우(1), 상(2), 하(3)]
@@ -9750,7 +9904,7 @@ index 7c31daa4c..39529780d 100644
                  cell_idx,
                  target_row,
                  target_col,
-@@ -1624,7 +2039,7 @@ impl DocumentCore {
+@@ -1624,7 +2134,7 @@ impl DocumentCore {
          &self,
          section_idx: usize,
          parent_para_idx: usize,
@@ -9759,7 +9913,7 @@ index 7c31daa4c..39529780d 100644
          cell_idx: usize,
          json: &str,
      ) -> String {
-@@ -1643,16 +2058,7 @@ impl DocumentCore {
+@@ -1643,16 +2153,7 @@ impl DocumentCore {
              return json.to_string();
          }
  
@@ -9777,7 +9931,7 @@ index 7c31daa4c..39529780d 100644
              return json.to_string();
          };
          let Some(cell) = table.cells.get(cell_idx) else {
-@@ -2055,6 +2461,7 @@ impl DocumentCore {
+@@ -2055,6 +2556,7 @@ impl DocumentCore {
      /// 변경이 반영되지 않을 수 있으므로, 이웃 셀의 대응 테두리도 함께 갱신한다.
      ///
      /// borders 배열: [좌(0), 우(1), 상(2), 하(3)]
@@ -9785,7 +9939,7 @@ index 7c31daa4c..39529780d 100644
      fn update_neighbor_borders(
          &mut self,
          section_idx: usize,
-@@ -2066,6 +2473,24 @@ impl DocumentCore {
+@@ -2066,6 +2568,24 @@ impl DocumentCore {
          target_col_span: usize,
          target_row_span: usize,
          new_borders: &[crate::model::style::BorderLine; 4],
@@ -9810,7 +9964,7 @@ index 7c31daa4c..39529780d 100644
      ) -> Vec<(usize, u16, u16)> {
          use crate::model::style::BorderLine;
  
-@@ -2076,7 +2501,7 @@ impl DocumentCore {
+@@ -2076,7 +2596,7 @@ impl DocumentCore {
          // 1단계: 이웃 셀 탐색 — (셀 인덱스, old_bf_id, 갱신할 방향, 새 테두리)
          let mut updates: Vec<(usize, u16, usize, BorderLine)> = Vec::new();
          {
@@ -9819,7 +9973,7 @@ index 7c31daa4c..39529780d 100644
                  Ok(t) => t,
                  Err(_) => return neighbor_changes,
              };
-@@ -2168,7 +2593,7 @@ impl DocumentCore {
+@@ -2168,7 +2688,7 @@ impl DocumentCore {
                  }
              };
  
@@ -9828,7 +9982,7 @@ index 7c31daa4c..39529780d 100644
                  Ok(t) => t,
                  Err(_) => return neighbor_changes,
              };
-@@ -2386,6 +2811,7 @@ impl DocumentCore {
+@@ -2386,6 +2906,7 @@ impl DocumentCore {
              }
          }
  
@@ -9836,7 +9990,146 @@ index 7c31daa4c..39529780d 100644
          self.document.sections[section_idx].raw_stream = None;
          self.recompose_section(section_idx);
          self.paginate_if_needed();
-@@ -2661,25 +3087,18 @@ impl DocumentCore {
+@@ -2561,97 +3082,54 @@ impl DocumentCore {
+         delta_h: i32,
+         delta_v: i32,
+     ) -> Result<String, HwpError> {
+-        let table = self.get_table_mut(section_idx, parent_para_idx, control_idx)?;
+-
+-        let is_treat_as_char = (table.attr & 0x01) != 0;
+-
+-        // [#6388] 현재 오프셋은 `common` 에서 읽는다 — 종전에는 raw 에서 읽어서 raw 가 빈
+-        // 표(HWPX 파스본)를 다루려면 0 확장이 필요했고, 그 확장이 저장 경로를 파괴했다.
+-        // `common` 이 정본으로 안전한 근거: 파스본 표 6708개에서 raw V/H_OFFSET 과
+-        // `common.vertical_offset`/`horizontal_offset` 불일치가 0건이다(실측).
+-        // 쓰기는 `common` 에 하고 raw 에는 길이가 허락할 때만 덧쓴다(dual-write 유지).
+-
+-        // vertical_offset: CommonObjAttr::V_OFFSET (i32 LE)
+-        let mut new_v = if delta_v != 0 {
+-            let nv = (table.common.vertical_offset as i32).wrapping_add(delta_v);
+-            table.common.vertical_offset = nv as u32;
+-            patch_raw_ctrl_field(
+-                &mut table.raw_ctrl_data,
+-                common_obj_offsets::V_OFFSET,
+-                &nv.to_le_bytes(),
+-            );
+-            nv
+-        } else {
+-            table.common.vertical_offset as i32
+-        };
++        let paragraphs = &mut self.document.sections.get_mut(section_idx)
++            .ok_or_else(|| HwpError::RenderError("구역 인덱스 범위 초과".to_string()))?.paragraphs;
++        let result_ppi = move_table_paragraphs(paragraphs, parent_para_idx, control_idx, delta_h, delta_v, false)?;
++        self.document.sections[section_idx].raw_stream = None;
++        self.recompose_section(section_idx);
++        self.paginate_if_needed();
++        Ok(format!("{{\"ok\":true,\"ppi\":{},\"ci\":{}}}", result_ppi, control_idx))
++    }
+ 
+-        // horizontal_offset: CommonObjAttr::H_OFFSET (i32 LE)
+-        if delta_h != 0 {
+-            let new_h = (table.common.horizontal_offset as i32).wrapping_add(delta_h);
+-            table.common.horizontal_offset = new_h as u32;
+-            patch_raw_ctrl_field(
+-                &mut table.raw_ctrl_data,
+-                common_obj_offsets::H_OFFSET,
+-                &new_h.to_le_bytes(),
+-            );
++    pub fn move_table_offset_by_cell_path_native(
++        &mut self,
++        section_idx: usize,
++        parent_para_idx: usize,
++        path: &[(usize, usize, usize)],
++        delta_h: i32,
++        delta_v: i32,
++    ) -> Result<String, HwpError> {
++        if path.len() == 1 {
++            return self.move_table_offset_native(section_idx, parent_para_idx, path[0].0, delta_h, delta_v);
+         }
+-
+-        // treat_as_char 표: 문단 경계를 넘으면 문단 이동 (다중 경계 루프)
+-        let mut result_ppi = parent_para_idx;
+-        if is_treat_as_char && delta_v != 0 {
+-            let para_count = self.document.sections[section_idx].paragraphs.len();
+-
+-            // 아래로: v_offset >= line_height이면 반복적으로 다음 문단과 교환
+-            while result_ppi + 1 < para_count {
+-                let lh = self.document.sections[section_idx].paragraphs[result_ppi]
+-                    .line_segs
+-                    .first()
+-                    .map(|ls| ls.line_height)
+-                    .unwrap_or(1000);
+-                if new_v < lh {
+-                    break;
+-                }
+-                new_v -= lh;
+-                self.document.sections[section_idx]
+-                    .paragraphs
+-                    .swap(result_ppi, result_ppi + 1);
+-                result_ppi += 1;
+-            }
+-
+-            // 위로: v_offset < 0이면 반복적으로 이전 문단과 교환
+-            while new_v < 0 && result_ppi > 0 {
+-                let prev_lh = self.document.sections[section_idx].paragraphs[result_ppi - 1]
+-                    .line_segs
+-                    .first()
+-                    .map(|ls| ls.line_height)
+-                    .unwrap_or(1000);
+-                new_v += prev_lh;
+-                self.document.sections[section_idx]
+-                    .paragraphs
+-                    .swap(result_ppi - 1, result_ppi);
+-                result_ppi -= 1;
+-            }
+-
+-            // 최종 v_offset 갱신
+-            if result_ppi != parent_para_idx {
+-                let tbl = self.get_table_mut(section_idx, result_ppi, control_idx)?;
+-                tbl.common.vertical_offset = new_v as u32;
+-                patch_raw_ctrl_field(
+-                    &mut tbl.raw_ctrl_data,
+-                    common_obj_offsets::V_OFFSET,
+-                    &new_v.to_le_bytes(),
+-                );
++        let table = self.resolve_table_by_path(section_idx, parent_para_idx, path)?;
++        let wraps_at_sides = matches!(table.common.text_wrap,
++            crate::model::shape::TextWrap::Square | crate::model::shape::TextWrap::Tight | crate::model::shape::TextWrap::Through);
++        let parent_path = &path[..path.len() - 1];
++        let host_idx = parent_path.last().unwrap().2;
++        let control_idx = path.last().unwrap().0;
++        let result_idx = move_table_paragraphs(
++            self.get_cell_paragraphs_mut_by_path(section_idx, parent_para_idx, parent_path)?,
++            host_idx, control_idx, delta_h, delta_v, true,
++        )?;
++        let mut result_path = path.to_vec();
++        result_path[path.len() - 2].2 = result_idx;
++        // Offset-only moves do not rewrite stored host lines. Reflow only when
++        // paragraphs change order or surrounding text wraps beside the table.
++        if host_idx != result_idx || wraps_at_sides {
++            for host in host_idx.min(result_idx)..=host_idx.max(result_idx) {
++                self.reflow_cell_paragraph_by_path(section_idx, parent_para_idx, parent_path, host);
+             }
++            self.recalculate_cell_paragraph_vpos_by_path(section_idx, parent_para_idx, parent_path, host_idx.min(result_idx), None);
++            self.reflow_table_ancestors_by_path(section_idx, parent_para_idx, &result_path);
+         }
+-
+         self.document.sections[section_idx].raw_stream = None;
+         self.recompose_section(section_idx);
+         self.paginate_if_needed();
+-
+-        Ok(format!(
+-            "{{\"ok\":true,\"ppi\":{},\"ci\":{}}}",
+-            result_ppi, control_idx
+-        ))
++        self.invalidate_page_tree_cache();
++        self.event_log.push(DocumentEvent::TableStructureChangedByPath { section: section_idx, para: parent_para_idx, cell_path: result_path.clone(), operation: "moveTable" });
++        Ok(serde_json::json!({"ok":true,"ppi":parent_para_idx,"ci":path[0].0,
++            "cellPath":result_path.iter().map(|&(control,cell,paragraph)|serde_json::json!({"controlIndex":control,"cellIndex":cell,"cellParaIndex":paragraph})).collect::<Vec<_>>()}).to_string())
+     }
+ 
+     /// 표 속성을 조회한다 (네이티브).
+@@ -2661,25 +3139,18 @@ impl DocumentCore {
          parent_para_idx: usize,
          control_idx: usize,
      ) -> Result<String, HwpError> {
@@ -9873,7 +10166,7 @@ index 7c31daa4c..39529780d 100644
  
          let pb = match table.page_break {
              crate::model::table::TablePageBreak::None => 0,
-@@ -2783,6 +3202,18 @@ impl DocumentCore {
+@@ -2783,6 +3254,18 @@ impl DocumentCore {
          parent_para_idx: usize,
          control_idx: usize,
          json: &str,
@@ -9892,7 +10185,7 @@ index 7c31daa4c..39529780d 100644
      ) -> Result<String, HwpError> {
          use super::super::helpers::{json_bool, json_i16, json_i32, json_str, json_u32, json_u8};
  
-@@ -2797,7 +3228,7 @@ impl DocumentCore {
+@@ -2797,7 +3280,7 @@ impl DocumentCore {
              .map(|(idx, s)| (idx as u8, s.para_shape_id, s.char_shape_id as u32))
              .unwrap_or((0, 0, 0));
  
@@ -9901,7 +10194,7 @@ index 7c31daa4c..39529780d 100644
  
          if let Some(v) = json_i16(json, "cellSpacing") {
              table.cell_spacing = v;
-@@ -3105,7 +3536,7 @@ impl DocumentCore {
+@@ -3105,7 +3588,7 @@ impl DocumentCore {
              || json.contains("\"centerLine\"");
          if has_border_fill_change {
              let new_bf_id = self.create_border_fill_from_json(json);
@@ -9910,7 +10203,7 @@ index 7c31daa4c..39529780d 100644
              table.border_fill_id = new_bf_id;
              for cell in &mut table.cells {
                  cell.border_fill_id = new_bf_id;
-@@ -3116,44 +3547,61 @@ impl DocumentCore {
+@@ -3116,44 +3599,61 @@ impl DocumentCore {
          // 중간 표 캡션 삭제 시 남은 표 번호가 한컴처럼 1부터 이어지도록 보장한다.
          if caption_created || caption_changed {
              crate::parser::assign_auto_numbers(&mut self.document);
@@ -10229,10 +10522,10 @@ index 16f230b54..50af4c287 100644
            <div class="md-item disabled" data-cmd="table:cell-width-equal"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.cellWidthEqual.label">셀 너비를 같게</span><span class="md-shortcut">W</span></div>
            <div class="md-item disabled" data-cmd="table:transpose-copy"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.transposeCopy.label">행/열 바꿈 복사</span></div>
 diff --git a/rhwp-studio/src/core/mutation-method-registry.ts b/rhwp-studio/src/core/mutation-method-registry.ts
-index 2d05c75e1..fb1d7fd59 100755
+index 2d05c75e1..86ea850bd 100755
 --- a/rhwp-studio/src/core/mutation-method-registry.ts
 +++ b/rhwp-studio/src/core/mutation-method-registry.ts
-@@ -31,7 +31,7 @@ export const MUTATING_METHODS: readonly string[] = [
+@@ -31,11 +31,11 @@ export const MUTATING_METHODS: readonly string[] = [
    'splitParagraphInCell', 'mergeParagraphInCell', 'splitParagraphInCellByPath',
    'mergeParagraphInCellByPath',
    // 표 구조/속성
@@ -10241,3 +10534,192 @@ index 2d05c75e1..fb1d7fd59 100755
    'insertTableColumn', 'deleteTableRow', 'deleteTableColumn', 'mergeTableCells',
    'splitTableCell', 'splitTableCellInto', 'splitTableCellsInRange', 'resizeTableCells',
    'resizeTableCellsByPath', // [#7189] 중첩 표 셀 크기 조절 — 평면 resizeTableCells 의 경로 변형
+-  'moveTableOffset', 'setTableProperties', 'setCellProperties', 'setCellZoneProperties',
++  'moveTableOffset', 'moveTableOffsetByPath', 'setTableProperties', 'setCellProperties', 'setCellZoneProperties',
+   'applyCellBorderFillIds', 'removeBorderFillTails',
+   'pasteTableCellsTransposed', 'transposeTableCellsInPlace', 'pasteTableCellsTransposedAsTable',
+   'evaluateTableFormula',
+diff --git a/rhwp-studio/src/engine/command.ts b/rhwp-studio/src/engine/command.ts
+index 6ec166661..e84d8c624 100644
+--- a/rhwp-studio/src/engine/command.ts
++++ b/rhwp-studio/src/engine/command.ts
+@@ -2006,6 +2006,7 @@ export class MoveTableCommand implements EditCommand {
+ 
+   private resultPpi: number;
+   private resultCi: number;
++  private resultCellPath?: CellPathEntry[];
+ 
+   constructor(
+     private sec: number,
+@@ -2016,17 +2017,24 @@ export class MoveTableCommand implements EditCommand {
+     resultPpi: number,
+     resultCi: number,
+     timestamp?: number,
++    private cellPath?: CellPathEntry[],
++    resultCellPath?: CellPathEntry[],
+   ) {
+     this.resultPpi = resultPpi;
+     this.resultCi = resultCi;
+     this.timestamp = timestamp ?? Date.now();
++    this.cellPath = cellPath?.map(e => ({ ...e }));
++    this.resultCellPath = resultCellPath?.map(e => ({ ...e }));
+   }
+ 
+   execute(wasm: WasmBridge): DocumentPosition {
+-    const result = wasm.moveTableOffset(this.sec, this.ppi, this.ci, this.deltaH, this.deltaV);
++    const result = this.cellPath
++      ? wasm.moveTableOffsetByPath(this.sec, this.ppi, this.cellPath, this.deltaH, this.deltaV)
++      : wasm.moveTableOffset(this.sec, this.ppi, this.ci, this.deltaH, this.deltaV);
+     this.resultPpi = result.ppi;
+     this.resultCi = result.ci;
+-    return { sectionIndex: this.sec, paragraphIndex: this.resultPpi, charOffset: 0 };
++    this.resultCellPath = 'cellPath' in result ? result.cellPath : undefined;
++    return this.positionAt(this.resultPpi, this.resultCellPath);
+   }
+ 
+   undo(wasm: WasmBridge): DocumentPosition {
+@@ -2035,10 +2043,21 @@ export class MoveTableCommand implements EditCommand {
+     // stale this.ppi/this.ci 를 그대로 반환했다. 표 이동과 문단 구조 변경(삽입/삭제/병합)이
+     // 같은 세션에서 섞이면 undo 후 커서가 존재하지 않거나 엉뚱한 문단을 가리킬 수 있다 —
+     // execute() 와 대칭으로 반환값을 캡처해 this.ppi/this.ci 를 갱신한다.
+-    const result = wasm.moveTableOffset(this.sec, this.resultPpi, this.resultCi, -this.deltaH, -this.deltaV);
++    const result = this.resultCellPath
++      ? wasm.moveTableOffsetByPath(this.sec, this.resultPpi, this.resultCellPath, -this.deltaH, -this.deltaV)
++      : wasm.moveTableOffset(this.sec, this.resultPpi, this.resultCi, -this.deltaH, -this.deltaV);
+     this.ppi = result.ppi;
+     this.ci = result.ci;
+-    return { sectionIndex: this.sec, paragraphIndex: this.ppi, charOffset: 0 };
++    this.cellPath = 'cellPath' in result ? result.cellPath : undefined;
++    return this.positionAt(this.ppi, this.cellPath);
++  }
++
++  private positionAt(ppi: number, path?: CellPathEntry[]): DocumentPosition {
++    if (!path) return { sectionIndex: this.sec, paragraphIndex: ppi, charOffset: 0 };
++    const last = path[path.length - 1];
++    return { sectionIndex: this.sec, paragraphIndex: last.cellParaIndex, charOffset: 0,
++      parentParaIndex: ppi, controlIndex: path[0].controlIndex,
++      cellIndex: last.cellIndex, cellParaIndex: last.cellParaIndex, cellPath: path };
+   }
+ 
+   mergeWith(other: EditCommand): EditCommand | null {
+@@ -2046,6 +2065,7 @@ export class MoveTableCommand implements EditCommand {
+     if (other.sec !== this.sec) return null;
+     // 연속 이동: 이전 결과 위치 == 다음 시작 위치
+     if (other.ppi !== this.resultPpi || other.ci !== this.resultCi) return null;
++    if (JSON.stringify(other.cellPath ?? []) !== JSON.stringify(this.resultCellPath ?? [])) return null;
+     if (other.timestamp - this.timestamp > 500) return null;
+ 
+     return new MoveTableCommand(
+@@ -2054,6 +2074,7 @@ export class MoveTableCommand implements EditCommand {
+       this.deltaV + other.deltaV,
+       other.resultPpi, other.resultCi,
+       this.timestamp,
++      this.cellPath, other.resultCellPath,
+     );
+   }
+ }
+diff --git a/rhwp-studio/src/engine/cursor.ts b/rhwp-studio/src/engine/cursor.ts
+index 22c194744..e70994f72 100644
+--- a/rhwp-studio/src/engine/cursor.ts
++++ b/rhwp-studio/src/engine/cursor.ts
+@@ -1846,9 +1846,15 @@ export class CursorState {
+   }
+ 
+   /** 표 이동 후 selectedTableRef의 ppi/ci를 갱신한다. */
+-  updateSelectedTableRef(sec: number, ppi: number, ci: number): void {
++  updateSelectedTableRef(sec: number, ppi: number, ci: number, cellPath?: CellPathEntry[]): void {
+     if (!this.selectedTableRef) return;
+-    this.selectedTableRef = { ...this.selectedTableRef, sec, ppi, ci };
++    this.selectedTableRef = { ...this.selectedTableRef, sec, ppi, ci, ...(cellPath ? { cellPath } : {}) };
++    if (cellPath) {
++      const last = cellPath[cellPath.length - 1];
++      this.moveTo({ ...this.position, sectionIndex: sec, paragraphIndex: last.cellParaIndex,
++        parentParaIndex: ppi, controlIndex: cellPath[0].controlIndex,
++        cellIndex: last.cellIndex, cellParaIndex: last.cellParaIndex, cellPath });
++    }
+   }
+ 
+   /** 표 객체 선택 상태에서 표 밖으로 커서를 이동한다. */
+diff --git a/rhwp-studio/src/engine/input-handler-table.ts b/rhwp-studio/src/engine/input-handler-table.ts
+index a0ba01533..7a10fada3 100644
+--- a/rhwp-studio/src/engine/input-handler-table.ts
++++ b/rhwp-studio/src/engine/input-handler-table.ts
+@@ -702,14 +702,16 @@ export function moveSelectedTable(this: any, key: 'ArrowUp' | 'ArrowDown' | 'Arr
+   }
+ 
+   try {
+-    const result = this.wasm.moveTableOffset(ref.sec, ref.ppi, ref.ci, deltaH, deltaV);
++    const result = ref.cellPath?.length > 1
++      ? this.wasm.moveTableOffsetByPath(ref.sec, ref.ppi, ref.cellPath, deltaH, deltaV)
++      : this.wasm.moveTableOffset(ref.sec, ref.ppi, ref.ci, deltaH, deltaV);
+     // Undo 기록
+     this.executeOperation({ kind: 'record', command:
+-      new MoveTableCommand(ref.sec, ref.ppi, ref.ci, deltaH, deltaV, result.ppi, result.ci),
++      new MoveTableCommand(ref.sec, ref.ppi, ref.ci, deltaH, deltaV, result.ppi, result.ci, undefined, ref.cellPath?.length > 1 ? ref.cellPath : undefined, result.cellPath),
+     });
+     // 문단 경계를 넘어 이동한 경우 selectedTableRef 갱신
+-    if (result.ppi !== ref.ppi || result.ci !== ref.ci) {
+-      this.cursor.updateSelectedTableRef(ref.sec, result.ppi, result.ci);
++    if (result.cellPath || result.ppi !== ref.ppi || result.ci !== ref.ci) {
++      this.cursor.updateSelectedTableRef(ref.sec, result.ppi, result.ci, result.cellPath);
+     }
+     this.eventBus.emit('document-changed');
+     this.renderTableObjectSelection();
+@@ -792,10 +794,12 @@ export function updateMoveDrag(this: any, e: MouseEvent): void {
+ 
+   try {
+     const ref = this.moveDragState.tableRef;
+-    const result = this.wasm.moveTableOffset(ref.sec, ref.ppi, ref.ci, deltaH, deltaV);
+-    if (result.ppi !== ref.ppi || result.ci !== ref.ci) {
+-      this.moveDragState.tableRef = { sec: ref.sec, ppi: result.ppi, ci: result.ci };
+-      this.cursor.updateSelectedTableRef(ref.sec, result.ppi, result.ci);
++    const result = ref.cellPath?.length > 1
++      ? this.wasm.moveTableOffsetByPath(ref.sec, ref.ppi, ref.cellPath, deltaH, deltaV)
++      : this.wasm.moveTableOffset(ref.sec, ref.ppi, ref.ci, deltaH, deltaV);
++    if (result.cellPath || result.ppi !== ref.ppi || result.ci !== ref.ci) {
++      this.moveDragState.tableRef = { sec: ref.sec, ppi: result.ppi, ci: result.ci, cellPath: result.cellPath };
++      this.cursor.updateSelectedTableRef(ref.sec, result.ppi, result.ci, result.cellPath);
+     }
+     this.moveDragState.lastPageX = px;
+     this.moveDragState.lastPageY = py;
+@@ -820,6 +824,7 @@ export function finishMoveDrag(this: any): void {
+           tableRef.sec, startPpi, tableRef.ci,
+           totalDeltaH, totalDeltaV,
+           tableRef.ppi, tableRef.ci,
++          undefined, state.startCellPath, tableRef.cellPath,
+         ),
+       });
+     }
+diff --git a/rhwp-studio/src/engine/input-handler-mouse.ts b/rhwp-studio/src/engine/input-handler-mouse.ts
+index a615c7cbd..4474a92da 100644
+--- a/rhwp-studio/src/engine/input-handler-mouse.ts
++++ b/rhwp-studio/src/engine/input-handler-mouse.ts
+@@ -441,15 +441,26 @@ export function onClick(this: any, e: MouseEvent): void {
+               enterCellHit = hit;
+             }
+           }
+-          const bbox = this.wasm.getTableBBoxAtPage(ref.sec, ref.ppi, ref.ci, pi);
++          let bbox;
++          if (ref.cellPath?.length > 1) {
++            const cells = this.wasm.getTableCellBboxesByPath(ref.sec, ref.ppi, JSON.stringify(ref.cellPath))
++              .filter((cell: any) => cell.pageIndex === pi);
++            const x = Math.min(...cells.map((cell: any) => cell.x));
++            const y = Math.min(...cells.map((cell: any) => cell.y));
++            bbox = { x, y, width: Math.max(...cells.map((cell: any) => cell.x + cell.w)) - x,
++              height: Math.max(...cells.map((cell: any) => cell.y + cell.h)) - y };
++          } else {
++            bbox = this.wasm.getTableBBoxAtPage(ref.sec, ref.ppi, ref.ci, pi);
++          }
+           if (px >= bbox.x && px <= bbox.x + bbox.width &&
+               py >= bbox.y && py <= bbox.y + bbox.height) {
+             clickedInsideSelectedTable = true;
+             e.preventDefault();
+             this.isMoveDragging = true;
+             this.moveDragState = {
+-              tableRef: { sec: ref.sec, ppi: ref.ppi, ci: ref.ci },
++              tableRef: { sec: ref.sec, ppi: ref.ppi, ci: ref.ci, cellPath: ref.cellPath?.length > 1 ? ref.cellPath : undefined },
+               startPpi: ref.ppi,
++              startCellPath: ref.cellPath?.length > 1 ? ref.cellPath.map((entry: any) => ({ ...entry })) : undefined,
+               startPageX: px, startPageY: py,
+               lastPageX: px, lastPageY: py,
+               totalDeltaH: 0, totalDeltaV: 0,
