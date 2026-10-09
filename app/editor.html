@@ -14,6 +14,7 @@
     button:disabled { cursor: default; opacity: .5; }
     #save { background: #1749a0; color: white; }
     #status { margin: 8px 0; font-size: 13px; }
+    #delivery { white-space:pre-wrap; font-size:12px; margin:8px 0; }
     .note { margin: 0; color: #69758a; font-size: 12px; }
     #editor { flex: 1; min-height: 0; }
   </style>
@@ -23,6 +24,10 @@
     <h1>HWP 패널 편집기</h1>
     <div class="controls">
       <button id="save" disabled>수정본 다운로드</button>
+      <button id="deliver" hidden disabled>결과 파일 저장</button>
+      <button id="replace" disabled>찾아 바꾸기</button>
+      <button id="read-text" disabled>문서 텍스트 확인</button>
+      <a class="button" href="/tasks" target="_blank" rel="noopener">작업 목록</a>
       <button id="open" disabled>다른 파일 열기</button>
       <a class="button" href="/editor" target="_blank" rel="noopener">새 문서 창</a>
       <select id="copies" aria-label="저장된 작업 사본"><option value="">저장된 작업 사본</option></select>
@@ -31,7 +36,9 @@
       <input id="file" type="file" accept=".hwp,.hwpx" hidden>
     </div>
     <p id="status">로컬 편집기를 준비하고 있습니다.</p>
+    <p id="delivery" role="status" hidden></p>
     <p class="note">변경 내용은 이 브라우저에 자동 저장됩니다. 원본 파일은 보존되며, 완성 파일은 ‘수정본 다운로드’로 받으세요. 여러 문서는 별도 창에서 작업할 수 있습니다.</p>
+    <details id="text-panel" hidden><summary>현재 문서 텍스트</summary><pre id="document-text" style="white-space:pre-wrap;max-height:160px;overflow:auto"></pre></details>
   </header>
   <main id="editor"></main>
   <script type="module" src="/editor.mjs"></script>

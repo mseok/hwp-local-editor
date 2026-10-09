@@ -97,7 +97,11 @@ async function render(bytes, info) {
       select.append(option);
     }
     const editButton = document.querySelector('#edit-button');
-    editButton.href = info.id ? `/editor?id=${info.id}` : `/editor?draft=${info.draftId || 'current'}`;
+    const query = new URL(location.href).searchParams;
+    const params = new URLSearchParams(info.id ? {id:info.id} : {draft:info.draftId || 'current'});
+    if (!info.id && query.has('id')) {params.set('id',query.get('id'));params.set('revision',query.get('revision')??'0');}
+    if (info.id && query.has('result')) params.set('result','1');
+    editButton.href = '/editor?'+params;
     const elapsedMs = Math.round(performance.now() - started);
     window.previewResult = { id: info.id, name: info.name, pageCount: count, nativePages: info.nativePages, elapsedMs, rendererVersion: version(), imageCount: pages.querySelectorAll('image').length, localFontCount: localFonts.length, fontResult };
     const comparison = info.nativePages ? ` / 기존 한컴 PDF ${info.nativePages}쪽` : '';
@@ -118,7 +122,7 @@ window.loadDocument = async id => {
   const info = documents.find(item => item.id === id);
   if (!info) throw new Error('문서가 목록에 없습니다.');
   select.value = id;
-  const response = await fetch(`/document/${id}/source`);
+  const response = await fetch(`/document/${id}/${new URL(location.href).searchParams.has('result')?'result':'source'}`);
   if (!response.ok) throw new Error('원본을 읽을 수 없습니다.');
   await render(new Uint8Array(await response.arrayBuffer()), info);
   return window.previewResult;

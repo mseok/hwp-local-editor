@@ -8,6 +8,19 @@ const resume = document.querySelector('#resume');
 let fileName = '문서.hwpx';
 let fileFormat = 'hwpx';
 let sourceBuffer;
+let registeredDocument;
+let outputRevision;
+const deliverButton = document.querySelector('#deliver');
+const delivery = document.querySelector('#delivery');
+const replaceButton = document.querySelector('#replace');
+const readTextButton = document.querySelector('#read-text');
+const query = new URL(location.href).searchParams;
+const id = query.get('id');
+function draftUrl(draftId) {
+  const params = new URLSearchParams({draft:draftId});
+  if (registeredDocument) { params.set('id',registeredDocument.id);params.set('revision',String(outputRevision)); }
+  return `/editor?${params}`;
+}
 
 copies.addEventListener('focus', async () => {
   try {
@@ -132,7 +145,11 @@ try {
     return task;
   }
   // Agent/API file opens use the same document identity and autosave lifecycle as the chooser.
-  studio.loadFile = (data, name) => load(data, name);
+  studio.loadFile = (data, name) => {
+    registeredDocument = undefined;outputRevision = undefined;deliverButton.hidden = true;delivery.hidden = true;
+    document.querySelector('h1').textContent = 'HWP 패널 편집기';
+    return load(data, name);
+  };
 
   async function loadDocument(data, name, draft) {
     await flushChanges();
@@ -145,6 +162,7 @@ try {
     window.editorReady = false;
     saveButton.disabled = true;
     openButton.disabled = true;
+    deliverButton.disabled = replaceButton.disabled = readTextButton.disabled = true;
     status.textContent = `${name} 읽는 중…`;
     try {
       let result = await nativeLoadFile(data, name, { skipUnsavedGuard: true });
@@ -174,7 +192,7 @@ try {
           await createJournalDraft(workingName, new Uint8Array(base), recovery.version, draftId, Boolean(draft));
           recovery.start();
           journalStarted = true;
-          history.replaceState(null, '', `/editor?draft=${draftId}`);
+          history.replaceState(null, '', draftUrl(draftId));
           savedStatus();
         } catch (error) {
           saveFailure = true;
@@ -192,6 +210,7 @@ try {
       throw error;
     } finally {
       saveButton.disabled = !window.editorReady;
+      deliverButton.disabled = replaceButton.disabled = readTextButton.disabled = !window.editorReady;
       openButton.disabled = false;
     }
   }
@@ -215,27 +234,35 @@ try {
     if (!journalStarted) {
       try {
         draftId = await saveDraft(fileName, bytes);
-        history.replaceState(null, '', `/editor?draft=${draftId}`);
+        history.replaceState(null, '', draftUrl(draftId));
       } catch { saveFailure = true; }
     }
     return bytes;
   }
   window.localAutosave = { flush: flushChanges, state: () => ({ draftId, changeRevision, savedRevision, saveFailure, journalStarted }) };
 
-  const query = new URL(location.href).searchParams;
-  const id = query.get('id');
   try {
+    if (id) {
+      const response = await fetch('/documents.json');
+      if (!response.ok) throw new Error('작업 목록을 읽지 못했습니다.');
+      registeredDocument = (await response.json()).find(item => item.id === id);
+      if (!registeredDocument) throw new Error('선택한 문서가 없습니다.');
+      outputRevision = query.has('revision') ? Number(query.get('revision')) : registeredDocument.revision;
+      if (!Number.isSafeInteger(outputRevision) || outputRevision < 0) throw new Error('잘못된 저장 버전입니다.');
+      deliverButton.hidden = false;
+      document.querySelector('h1').textContent = registeredDocument.name;
+      document.title = registeredDocument.name+' · HWP 패널 편집기';
+    }
     if (query.has('draft')) {
       const draft = await loadDraft(query.get('draft'));
       if (!draft) throw new Error('작업 사본이 없습니다.');
       const data = draft.baseBytes instanceof ArrayBuffer ? draft.baseBytes : draft.baseBytes.slice().buffer;
       await load(data, draft.name, draft);
     } else if (id) {
-      const docs = await (await fetch('/documents.json')).json();
-      const doc = docs.find(item => item.id === id);
-      if (!doc) throw new Error('선택한 문서가 없습니다.');
       document.querySelector('#back').href = `/?document=${id}`;
-      await load(await (await fetch(`/document/${id}/source`)).arrayBuffer(), doc.name);
+      const response = await fetch(`/document/${id}/${query.has('result')?'result':'source'}`);
+      if (!response.ok) throw new Error(await response.text());
+      await load(await response.arrayBuffer(), registeredDocument.name);
     } else {
       openButton.disabled = false;
       status.textContent = '편집할 HWP/HWPX 파일을 선택하세요.';
@@ -248,10 +275,54 @@ try {
   document.querySelector('#file').addEventListener('change', async event => {
     const file = event.target.files[0];
     if (file) {
+      registeredDocument = undefined;outputRevision = undefined;deliverButton.hidden = true;delivery.hidden = true;
+      document.querySelector('h1').textContent = 'HWP 패널 편집기';
       try { await load(await file.arrayBuffer(), file.name); }
       catch (error) { status.textContent = `파일 열기 실패: ${error.message}`; }
       finally { event.target.value = ''; }
     }
+  });
+  async function currentText() {
+    const value = await studio.hwpctrl.call('GetTextFile',['UNICODE','']);
+    return typeof value === 'string' ? value : JSON.stringify(value);
+  }
+  readTextButton.addEventListener('click',async()=>{
+    try {
+      document.querySelector('#document-text').textContent = await currentText();
+      const panel = document.querySelector('#text-panel');panel.hidden = false;panel.open = true;
+    } catch(error) { status.textContent = `텍스트 확인 실패: ${error.message}`; }
+  });
+  replaceButton.addEventListener('click',async()=>{
+    try {
+      await studio.commands.execute('edit:find-replace',undefined,{allowDialog:true});
+      const dialog = studio.element.contentDocument.querySelector('.find-dialog');
+      const inputs = dialog?.querySelectorAll('.find-dialog-input');
+      inputs?.[0]?.setAttribute('aria-label','찾을 내용');inputs?.[1]?.setAttribute('aria-label','바꿀 내용');
+      dialog?.querySelector('.dialog-close')?.setAttribute('aria-label','찾아 바꾸기 닫기');
+    }
+    catch(error) { status.textContent = `찾아 바꾸기 실패: ${error.message}`; }
+  });
+  deliverButton.addEventListener('click',async()=>{
+    if (!registeredDocument) return;
+    const editorArea = document.querySelector('#editor');
+    editorArea.inert = true;
+    deliverButton.disabled = saveButton.disabled = openButton.disabled = replaceButton.disabled = readTextButton.disabled = true;
+    delivery.hidden = false;delivery.textContent = '결과 파일 검증·저장 중…';
+    try {
+      const text = await currentText();
+      const bytes = await persistWorkingCopy();
+      if (await currentText() !== text) throw new Error('저장 도중 문서가 변경되었습니다. 다시 저장하세요.');
+      const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(byte=>byte.toString(16).padStart(2,'0')).join('');
+      const response = await fetch(`/document/${registeredDocument.id}/result`,{method:'POST',headers:{'Content-Type':'application/octet-stream','X-Output-Revision':String(outputRevision),'X-Expected-Text-Sha256':hash},body:bytes});
+      if (!response.ok) throw new Error(await response.text());
+      const receipt = await response.json();
+      outputRevision = receipt.revision;
+      history.replaceState(null,'',draftUrl(draftId));
+      delivery.textContent = `결과 저장됨 · ${receipt.pageCount}쪽 · 저장 버전 ${receipt.revision}\n${receipt.path}\n엔진 재열기: 텍스트·형식 일치. 한컴 배치 검수는 별도입니다.`;
+      delivery.dataset.revision = String(receipt.revision);
+      status.textContent = `${fileName} 결과 파일 저장 완료. 원본은 보존됩니다.`;
+    } catch(error) { delivery.textContent = `결과 저장 실패: ${error.message}`; }
+    finally { editorArea.inert = false;deliverButton.disabled = saveButton.disabled = openButton.disabled = replaceButton.disabled = readTextButton.disabled = false; }
   });
   document.querySelector('#back').addEventListener('click', async event => {
     if (!window.editorReady) return;
@@ -259,7 +330,9 @@ try {
     try {
       await persistWorkingCopy();
       if (saveFailure) throw new Error('로컬 저장에 실패했습니다. 수정본 다운로드를 사용하세요.');
-      location.href = `/?draft=${draftId}`;
+      const params = new URLSearchParams({draft:draftId});
+      if (registeredDocument) {params.set('id',registeredDocument.id);params.set('revision',String(outputRevision));}
+      location.href = '/?'+params;
     } catch (error) { status.textContent = `미리보기 준비 실패: ${error.message}`; }
   });
   saveButton.addEventListener('click', async () => {

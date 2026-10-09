@@ -1,12 +1,15 @@
 # HWP Local Editor
 
-A local HWP/HWPX browser editor with incremental recovery and independent working copies for multiple documents. Built on [rhwp](https://github.com/edwardkim/rhwp), an MIT-licensed Rust/WASM parser, renderer, Studio UI and embedding SDK.
+A local HWP/HWPX browser editor for Codex/Claude computer-use workflows, with incremental recovery and independent working copies for multiple documents. Built on [rhwp](https://github.com/edwardkim/rhwp), an MIT-licensed Rust/WASM parser, renderer, Studio UI and embedding SDK.
 
 This repository contains the local shell and source patches against rhwp v0.8.7. It is not a reimplementation of the rhwp engine, nor an official Hancom product.
 
 ## Features
 
 - Open HWP/HWPX files in a browser or an embedded local browser panel.
+- Register several local files once, then open each through its browser link without automating file uploads.
+- Let an agent inspect accessible body/table text, operate find/replace or rich editing controls, and save results into a designated local folder.
+- Reopen exported results and check text and source format before publication; reject stale duplicate-tab saves.
 - Edit, preview and explicitly download a working copy. The original file is never overwritten.
 - Record successful editing commands in IndexedDB rather than repeatedly exporting the full document while typing.
 - Attempt a save after 300 ms of idle time or 1000 ms of continued input.
@@ -31,6 +34,28 @@ Open http://127.0.0.1:8766/editor. The build fetches a pinned public upstream re
 
 The build cache is ignored. If patches change, move .cache/rhwp aside before rebuilding. CARGO_BIN, WASM_BINDGEN_BIN and CARGO_TARGET_DIR can use an existing toolchain/cache.
 
+## Automatic document editing through an agent
+
+After building, install the task skill for local Codex and Claude Code:
+
+```sh
+node scripts/install-skill.mjs
+```
+
+Use `--codex-only` to install only for Codex. This installs instructions and a local repository pointer, not an LLM service or credentials. A new session/reload may be needed for skill discovery. The installed skill explains how to handle files, edit through browser computer use, verify outputs and return file links. Claude must have its own working browser/computer-use tools; its execution has not been tested here.
+
+Give the agent the files and the edits to make. It starts a task workspace using:
+
+```sh
+node scripts/open.mjs --output local/results/task-001 --port 8766 document.hwp second-document.hwpx
+```
+
+The command prints the manifest, output directory and `/tasks` URL, then runs the local server. Use an unused port; preserve existing servers and tabs. Each document gets a direct editor link and its own result path. Register only files the user asked to edit. No arbitrary file-path endpoint is exposed.
+
+The agent opens the task list in a background browser, edits separate tabs, clicks **결과 파일 저장**, inspects the result and returns the files. The source is never overwritten. The output folder receives editable HWP/HWPX files plus per-file `.receipt.json` records. To resume after stopping the owned server, start it with the saved `DOCUMENT_MANIFEST` and the same `PORT`.
+
+Natural-language planning stays with Codex/Claude; this app supplies editing controls and file handling. It does not call a model automatically or run an agent without a browser tool. Validation checks engine reopening, text and format; it does not certify native Hancom layout or every special object.
+
 ## Fonts and layout
 
 Private documents, signatures, personnel information, proprietary font binaries, converted font outlines and locally extracted font-metric tables are not distributed here. This public build uses upstream open-font fallbacks. It does not promise pixel-identical Hancom output or support for every special object.
@@ -45,7 +70,7 @@ Font files are read only from this explicitly configured list and served only ov
 
 ## Persistence and privacy
 
-Documents and command logs remain in this browser profile's IndexedDB. There is no upload endpoint, cloud sync or analytics in the local shell. The server listens only on 127.0.0.1 and validates the Host header. Do not expose this server through a tunnel or public reverse proxy.
+Working copies and command logs remain in this browser profile's IndexedDB. With `scripts/open.mjs`, registered sources are read from disk and explicitly saved results/receipts are written only to the selected output directory. The save endpoint validates the same-origin request, document identity, revision, text fingerprint and source format. There is no cloud sync or analytics. The server listens only on 127.0.0.1 and validates the Host header. Do not expose this server through a tunnel or public reverse proxy.
 
 Download important finished work. Browser storage can be cleared, evicted or fail on quota; it is a recovery aid, not an archival backup. A forced close before a pending transaction completes can lose the newest changes. Recovery logs from incompatible engine versions are rejected.
 
@@ -58,6 +83,7 @@ npm run audit
 npm install --no-save --package-lock=false playwright
 npx playwright install chromium
 npm run test:browser
+npm run test:agent
 ```
 
 The browser check uses synthetic documents created by the engine, never private fixtures. See docs/verification.md for the tested public release and boundaries.
