@@ -34,6 +34,8 @@ export const LOCAL_JOURNAL_METHODS = new Set([
   "replaceRangeInHeaderFooter",
   "copySelectionInHeaderFooter",
   "applyCharFormatInHeaderFooter",
+  "splitTableByPath",
+  "mergeTableWithNextByPath",
   "splitTable",
   "mergeTableWithNext",
   "insertTableRowByPath",

@@ -92,6 +92,7 @@ npm run test:agent
 npm run test:complex
 npm run test:format
 npm run test:nested
+npm run test:table-split
 ```
 
 The browser check uses synthetic documents created by the engine, never private fixtures. See docs/verification.md for the tested public release and boundaries.
