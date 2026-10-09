@@ -1,5 +1,5 @@
 diff --git a/rhwp-studio/src/core/wasm-bridge.ts b/rhwp-studio/src/core/wasm-bridge.ts
-index 58162bab6..68165c20c 100644
+index 58162bab6..ce82694dd 100644
 --- a/rhwp-studio/src/core/wasm-bridge.ts
 +++ b/rhwp-studio/src/core/wasm-bridge.ts
 @@ -10,6 +10,7 @@ import type { HyperlinkTarget, HyperlinkContext } from './hyperlink';
@@ -99,7 +99,31 @@ index 58162bab6..68165c20c 100644
    /**
     * 플러그인 차용용 문서 핸들.
     *
-@@ -1897,6 +1937,11 @@ export class WasmBridge {
+@@ -1344,6 +1384,11 @@ export class WasmBridge {
+     ));
+   }
+ 
++  getCursorRectOnLineByPath(sec: number, parentPara: number, pathJson: string, lineIndex: number, atEnd: boolean): CursorRect {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse(this.doc.getCursorRectOnLineByPath(sec, parentPara, pathJson, lineIndex, atEnd));
++  }
++
+   hitTest(pageNum: number, x: number, y: number): HitTestResult {
+     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
+     return JSON.parse(this.doc.hitTest(pageNum, x, y));
+@@ -1823,6 +1868,11 @@ export class WasmBridge {
+     return JSON.parse(this.doc.getLineInfoInCell(sec, parentPara, controlIdx, cellIdx, cellParaIdx, charOffset));
+   }
+ 
++  getLineInfoInCellByPath(sec: number, parentPara: number, pathJson: string, charOffset: number): LineInfo {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse(this.doc.getLineInfoInCellByPath(sec, parentPara, pathJson, charOffset));
++  }
++
+   /**
+    * 문서에 **저장된** 캐럿 스탬프({@link setCaretPosition} 가 남긴 값,
+    * `doc_properties.caret_list_id/caret_para_id/caret_char_pos`)를 읽는다.
+@@ -1897,6 +1947,11 @@ export class WasmBridge {
      return JSON.parse(this.doc.deleteTableControl(sec, parentPara, controlIdx));
    }
  
@@ -111,7 +135,7 @@ index 58162bab6..68165c20c 100644
    getCellProperties(sec: number, parentPara: number, controlIdx: number, cellIdx: number): CellProperties {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      return JSON.parse(this.doc.getCellProperties(sec, parentPara, controlIdx, cellIdx));
-@@ -1907,6 +1952,11 @@ export class WasmBridge {
+@@ -1907,6 +1962,11 @@ export class WasmBridge {
      return JSON.parse((this.doc as any).getCellPropertiesByPath(sec, parentPara, pathJson, cellIdx));
    }
  
@@ -123,7 +147,7 @@ index 58162bab6..68165c20c 100644
    getCellOwnProperties(sec: number, parentPara: number, controlIdx: number, cellIdx: number): CellProperties {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      const doc = this.doc as unknown as {
-@@ -2054,16 +2104,31 @@ export class WasmBridge {
+@@ -2054,16 +2114,31 @@ export class WasmBridge {
      );
    }
  
@@ -156,7 +180,7 @@ index 58162bab6..68165c20c 100644
    getTableSignature(sec: number, parentPara: number, controlIdx: number): string {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      const d = this.doc as unknown as { getTableSignature?: (a: number, b: number, c: number) => string };
-@@ -2078,6 +2143,26 @@ export class WasmBridge {
+@@ -2078,6 +2153,26 @@ export class WasmBridge {
      return JSON.parse(this.doc.setTableProperties(sec, parentPara, controlIdx, JSON.stringify(props)));
    }
  
@@ -183,7 +207,7 @@ index 58162bab6..68165c20c 100644
    mergeTableCells(sec: number, parentPara: number, controlIdx: number, startRow: number, startCol: number, endRow: number, endCol: number): { ok: boolean; cellCount: number } {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      return JSON.parse(this.doc.mergeTableCells(sec, parentPara, controlIdx, startRow, startCol, endRow, endCol));
-@@ -2156,6 +2241,26 @@ export class WasmBridge {
+@@ -2156,6 +2251,26 @@ export class WasmBridge {
      return JSON.parse((this.doc as any).transposeTableCellsInPlace(sec, parentPara, controlIdx));
    }
  
@@ -210,7 +234,7 @@ index 58162bab6..68165c20c 100644
    pasteTableCellsTransposedAsTable(
      sec: number,
      para: number,
-@@ -2170,6 +2275,11 @@ export class WasmBridge {
+@@ -2170,6 +2285,11 @@ export class WasmBridge {
      return Boolean((this.doc as any).hasTableTransposeClipboard?.());
    }
  
@@ -222,7 +246,7 @@ index 58162bab6..68165c20c 100644
    /** 표를 지정 행에서 두 개로 나눈다 (한컴 [표-표 나누기]). */
    splitTable(sec: number, parentPara: number, controlIdx: number, atRow: number): { ok: boolean; frontRows: number; backParaIdx: number } {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
-@@ -2182,6 +2292,36 @@ export class WasmBridge {
+@@ -2182,6 +2302,36 @@ export class WasmBridge {
      return JSON.parse(this.doc.mergeTableWithNext(sec, parentPara, controlIdx));
    }
  
@@ -259,7 +283,29 @@ index 58162bab6..68165c20c 100644
    insertTableRow(sec: number, parentPara: number, controlIdx: number, rowIdx: number, below: boolean): { ok: boolean; rowCount: number; colCount: number } {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      return JSON.parse(this.doc.insertTableRow(sec, parentPara, controlIdx, rowIdx, below));
-@@ -3782,9 +3922,9 @@ export class WasmBridge {
+@@ -3004,6 +3154,21 @@ export class WasmBridge {
+     return JSON.parse(this.doc.getCellParaPropertiesAt(sec, parentPara, controlIdx, cellIdx, cellParaIdx));
+   }
+ 
++  getCellParaPropertiesAtByPath(sec: number, parentPara: number, pathJson: string): ParaProperties {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse((this.doc as any).getCellParaPropertiesAtByPath(sec, parentPara, pathJson));
++  }
++
++  applyParaFormatInCellByPath(sec: number, parentPara: number, pathJson: string, propsJson: string): string {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return (this.doc as any).applyParaFormatInCellByPath(sec, parentPara, pathJson, propsJson);
++  }
++
++  setCellParaShapeIdByPath(sec: number, parentPara: number, pathJson: string, paraShapeId: number): string {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return (this.doc as any).setCellParaShapeIdByPath(sec, parentPara, pathJson, paraShapeId);
++  }
++
+   setNumberingRestart(sec: number, para: number, mode: number, startNum: number): string {
+     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
+     return (this.doc as any).setNumberingRestart(sec, para, mode, startNum);
+@@ -3782,9 +3947,9 @@ export class WasmBridge {
     * cellContext 가 실리므로 호출자는 셀 좌표로 커서를 옮길 수 있어야 한다.
     * 기본값은 종전대로 본문만 — 셀 이동을 못 하는 호출자가 무회귀로 남는다.
     */
@@ -271,7 +317,7 @@ index 58162bab6..68165c20c 100644
    }
  
    searchAllText(query: string, caseSensitive: boolean, includeCells: boolean = false): import('./types').SearchHit[] {
-@@ -3804,7 +3944,7 @@ export class WasmBridge {
+@@ -3804,7 +3969,7 @@ export class WasmBridge {
  
    replaceAll(query: string, newText: string, caseSensitive: boolean): import('./types').ReplaceAllResult {
      if (!this.doc || typeof (this.doc as any).replaceAll !== 'function') return { ok: false };
@@ -2461,7 +2507,7 @@ index f50cde5..a8e4746 100644
              hwp3_variant: false,
              hft_ascii_halfwidth: false,
 diff --git a/src/renderer/layout/paragraph_layout.rs b/src/renderer/layout/paragraph_layout.rs
-index c585b32a6..95489e929 100755
+index c585b32a6..a5d822fe9 100755
 --- a/src/renderer/layout/paragraph_layout.rs
 +++ b/src/renderer/layout/paragraph_layout.rs
 @@ -91,6 +91,65 @@ fn terminal_tracking_after_inline_picture(
@@ -3158,7 +3204,72 @@ index c585b32a6..95489e929 100755
                                  empty_line_mark_x = img_x;
                                  empty_line_logical_end += 1;
                              }
-@@ -10369,92 +10738,929 @@ pub(crate) struct ParaInlineState {
+@@ -10193,48 +10562,23 @@ impl LayoutEngine {
+         para: &Paragraph,
+         _counter: &mut super::AutoNumberCounter, // 더 이상 사용하지 않음 (파싱 시 할당됨)
+     ) {
+-        // AutoNumber 컨트롤이 있는지 확인
+-        for ctrl in &para.controls {
+-            if let Control::AutoNumber(an) = ctrl {
+-                // 파싱 시점에 할당된 번호를 번호 형식에 맞게 변환 + 장식 문자 적용
+-                let num_fmt = NumFmt::from_hwp_format(an.format);
+-                let num_str = format_number(an.assigned_number, num_fmt);
+-                let num_str = if an.prefix_char != '\0' || an.suffix_char != '\0' {
+-                    format!(
+-                        "{}{}{}",
+-                        if an.prefix_char != '\0' {
+-                            an.prefix_char.to_string()
+-                        } else {
+-                            String::new()
+-                        },
+-                        num_str,
+-                        if an.suffix_char != '\0' {
+-                            an.suffix_char.to_string()
+-                        } else {
+-                            String::new()
+-                        },
+-                    )
+-                } else {
+-                    num_str
+-                };
+-
+-                // 각 줄의 텍스트에서 AutoNumber 위치를 찾아 번호로 대체
+-                // HWP5/HWPX/HWP3 공통: 공백 두 개("  ") 패턴 탐색
+-                for line in &mut composed.lines {
+-                    for run in &mut line.runs {
+-                        if let Some(pos) = run.text.find("  ") {
+-                            run.text = format!(
+-                                "{}{}{}",
+-                                &run.text[..pos + 1],
+-                                num_str,
+-                                &run.text[pos + 1..]
+-                            );
+-                            return;
+-                        }
+-                    }
+-                }
+-            }
++        let mut replacements = Vec::new();
++        for (control_index, ctrl) in para.controls.iter().enumerate() {
++            let Control::AutoNumber(an) = ctrl else { continue };
++            let ordinal = para.controls[..control_index].iter().filter(|ctrl| {
++                matches!(ctrl, Control::AutoNumber(previous) if previous.number_type == an.number_type)
++            }).count();
++            let positions = self.auto_number_placeholder_positions(para, an.number_type);
++            let Some(&position) = positions.get(ordinal) else { continue };
++            let num_fmt = NumFmt::from_hwp_format(an.format);
++            let mut number = format_number(an.assigned_number, num_fmt);
++            if an.prefix_char != '\0' { number.insert(0, an.prefix_char); }
++            if an.suffix_char != '\0' { number.push(an.suffix_char); }
++            replacements.push((position, number));
+         }
++        // A caption number replaces its stored placeholder only for display.
++        // Inserting into model text shifts later run offsets and breaks Home/End.
++        Self::replace_composed_chars_with_display(composed, &replacements);
+     }
+ }
+ 
+@@ -10369,81 +10713,918 @@ pub(crate) struct ParaInlineState {
  }
  
  #[cfg(test)]
@@ -3421,17 +3532,6 @@ index c585b32a6..95489e929 100755
 -    }
 -
 -    #[test]
--    fn split_distributes_single_last_line_but_justify_does_not() {
--        assert!(needs_word_distribution(Alignment::Split, true, false));
--        assert!(!needs_word_distribution(Alignment::Justify, true, false));
--        assert!(needs_word_distribution(Alignment::Justify, false, false));
--        assert!(!needs_word_distribution(Alignment::Justify, false, true));
--        assert!(!needs_word_distribution(Alignment::Split, true, true));
--    }
--
--    #[test]
--    fn split_label_assigns_positive_slack_to_interior_spaces() {
--        let line = split_label_line();
 +        let line_count = lines.len();
 +        let composed = ComposedParagraph {
 +            lines,
@@ -4147,21 +4247,10 @@ index c585b32a6..95489e929 100755
 +    }
 +
 +    #[test]
-+    fn split_distributes_single_last_line_but_justify_does_not() {
-+        assert!(needs_word_distribution(Alignment::Split, true, false));
-+        assert!(!needs_word_distribution(Alignment::Justify, true, false));
-+        assert!(needs_word_distribution(Alignment::Justify, false, false));
-+        assert!(!needs_word_distribution(Alignment::Justify, false, true));
-+        assert!(!needs_word_distribution(Alignment::Split, true, true));
-+    }
-+
-+    #[test]
-+    fn split_label_assigns_positive_slack_to_interior_spaces() {
-+        let line = split_label_line();
-         let (extra_word, extra_char, extra_dash) = compute_line_extra_spacing(
-             &line,
-             usize::MAX,
-@@ -10468,10 +11674,12 @@ mod issue_2809_split_alignment_tests {
+     fn split_distributes_single_last_line_but_justify_does_not() {
+         assert!(needs_word_distribution(Alignment::Split, true, false));
+         assert!(!needs_word_distribution(Alignment::Justify, true, false));
+@@ -10468,10 +11649,12 @@ mod issue_2809_split_alignment_tests {
              false,
              false,
              false,
@@ -4174,7 +4263,7 @@ index c585b32a6..95489e929 100755
          );
  
          assert!((extra_word - 30.0).abs() < 0.001);
-@@ -10505,10 +11713,12 @@ mod issue_2809_split_alignment_tests {
+@@ -10505,10 +11688,12 @@ mod issue_2809_split_alignment_tests {
              true,
              false,
              false,
@@ -4187,7 +4276,7 @@ index c585b32a6..95489e929 100755
          );
          let mut distributed_style = text_style;
          distributed_style.extra_word_spacing = extra_word;
-@@ -10545,10 +11755,12 @@ mod issue_2809_split_alignment_tests {
+@@ -10545,10 +11730,12 @@ mod issue_2809_split_alignment_tests {
              false,
              false,
              false,
@@ -4200,7 +4289,7 @@ index c585b32a6..95489e929 100755
          );
  
          let mut distributed_style = text_style.clone();
-@@ -10595,10 +11807,12 @@ mod issue_2809_split_alignment_tests {
+@@ -10595,10 +11782,12 @@ mod issue_2809_split_alignment_tests {
              false,
              false,
              false,
@@ -4213,7 +4302,7 @@ index c585b32a6..95489e929 100755
          );
          assert_eq!(extra_word, 0.0);
          assert_eq!(extra_char, 0.0);
-@@ -10618,10 +11832,12 @@ mod issue_2809_split_alignment_tests {
+@@ -10618,10 +11807,12 @@ mod issue_2809_split_alignment_tests {
              false,
              false,
              false,
@@ -4226,7 +4315,7 @@ index c585b32a6..95489e929 100755
          );
          assert!(extra_char_mid > 0.0);
      }
-@@ -10665,10 +11881,12 @@ mod issue_4657_distribute_alignment_tests {
+@@ -10665,10 +11856,12 @@ mod issue_4657_distribute_alignment_tests {
              false,
              false,
              false,
@@ -4239,7 +4328,7 @@ index c585b32a6..95489e929 100755
          );
          assert_eq!(extra_word, 0.0);
          assert_eq!(extra_dash, 0.0);
-@@ -11262,3 +12480,191 @@ mod pua_mapping_tests {
+@@ -11262,3 +12455,191 @@ mod pua_mapping_tests {
          assert_eq!(map_pua_bullet_char('\u{F00CF}'), '\u{F00CF}');
      }
  }
@@ -7162,7 +7251,7 @@ index 2f0b5ae..0fb0243 100644
          w,
          "hh:breakSetting",
 diff --git a/src/wasm_api.rs b/src/wasm_api.rs
-index 2031085e3..2a6548e66 100644
+index 2031085e3..03825280d 100644
 --- a/src/wasm_api.rs
 +++ b/src/wasm_api.rs
 @@ -189,6 +189,11 @@ fn render_page_to_canvas_filtered_with_profile_impl(
@@ -7537,7 +7626,56 @@ index 2031085e3..2a6548e66 100644
      /// 캐럿 위치에서 문단을 분할한다 (Enter 키).
      ///
      /// char_offset 이후의 텍스트가 새 문단으로 이동한다.
-@@ -3382,6 +3653,21 @@ impl HwpDocument {
+@@ -2941,6 +3212,24 @@ impl HwpDocument {
+         .map_err(|e| e.into())
+     }
+ 
++    #[wasm_bindgen(js_name = getCursorRectOnLineByPath)]
++    pub fn get_cursor_rect_on_line_by_path(
++        &self,
++        section_idx: u32,
++        parent_para_idx: u32,
++        path_json: &str,
++        line_index: u32,
++        at_end: bool,
++    ) -> Result<String, JsValue> {
++        self.get_cursor_rect_on_line_by_path_native(
++            section_idx as usize,
++            parent_para_idx as usize,
++            path_json,
++            line_index as usize,
++            at_end,
++        ).map_err(|e| e.into())
++    }
++
+     /// 페이지 좌표에서 문서 위치를 찾는다.
+     ///
+     /// 반환: JSON `{"sectionIndex":N,"paragraphIndex":N,"charOffset":N}`
+@@ -3262,6 +3551,23 @@ impl HwpDocument {
+         .map_err(|e| e.into())
+     }
+ 
++    #[wasm_bindgen(js_name = getLineInfoInCellByPath)]
++    pub fn get_line_info_in_cell_by_path(
++        &self,
++        section_idx: u32,
++        parent_para_idx: u32,
++        path_json: &str,
++        char_offset: u32,
++    ) -> Result<String, JsValue> {
++        let path = DocumentCore::parse_cell_path(path_json)?;
++        let para = self.resolve_paragraph_by_path(
++            section_idx as usize,
++            parent_para_idx as usize,
++            &path,
++        )?;
++        DocumentCore::compute_line_info(para, char_offset as usize).map_err(|e| e.into())
++    }
++
+     /// 문서에 저장된 캐럿 위치를 반환한다 (문서 로딩 시 캐럿 자동 배치용).
+     ///
+     /// 반환: JSON `{"sectionIndex":N,"paragraphIndex":N,"charOffset":N}`
+@@ -3382,6 +3688,21 @@ impl HwpDocument {
      /// 반환: JSON `{"ok":true,"changes":[{cellIdx,beforeId,afterId}...],
      /// "borderFillLenBefore":N,"docInfoDirtyBefore":bool}` — changes 는 [#5959]
      /// borderFillId 전환 기록(target+이웃)이다.
@@ -7559,7 +7697,7 @@ index 2031085e3..2a6548e66 100644
      #[wasm_bindgen(js_name = setCellProperties)]
      pub fn set_cell_properties(
          &mut self,
-@@ -3530,9 +3816,34 @@ impl HwpDocument {
+@@ -3530,9 +3851,34 @@ impl HwpDocument {
          .map_err(|e| e.into())
      }
  
@@ -7596,7 +7734,7 @@ index 2031085e3..2a6548e66 100644
      #[wasm_bindgen(js_name = getTableProperties)]
      pub fn get_table_properties(
          &self,
-@@ -3551,6 +3862,20 @@ impl HwpDocument {
+@@ -3551,6 +3897,20 @@ impl HwpDocument {
      /// 표 속성을 수정한다.
      ///
      /// 반환: JSON `{"ok":true}`
@@ -7617,7 +7755,7 @@ index 2031085e3..2a6548e66 100644
      #[wasm_bindgen(js_name = setTableProperties)]
      pub fn set_table_properties(
          &mut self,
-@@ -5498,9 +5823,11 @@ impl HwpDocument {
+@@ -5498,9 +5858,11 @@ impl HwpDocument {
          forward: bool,
          case_sensitive: bool,
          include_cells: Option<bool>,
@@ -7630,7 +7768,7 @@ index 2031085e3..2a6548e66 100644
                  query,
                  from_sec as usize,
                  from_para as usize,
-@@ -5509,6 +5836,7 @@ impl HwpDocument {
+@@ -5509,6 +5871,7 @@ impl HwpDocument {
                  case_sensitive,
                  // [#3865] 미지정이면 종전 동작(본문만) — 인자를 6개만 넘기던 기존 호출자 무회귀.
                  include_cells.unwrap_or(false),
@@ -7638,7 +7776,7 @@ index 2031085e3..2a6548e66 100644
              )
              .map_err(|e| e.into())
      }
-@@ -5567,10 +5895,17 @@ impl HwpDocument {
+@@ -5567,10 +5930,17 @@ impl HwpDocument {
          query: &str,
          new_text: &str,
          case_sensitive: bool,
@@ -7659,7 +7797,7 @@ index 2031085e3..2a6548e66 100644
      }
  
      /// 글로벌 쪽 번호에 해당하는 첫 문단 위치 반환
-@@ -6082,8 +6417,12 @@ impl HwpDocument {
+@@ -6082,8 +6452,12 @@ impl HwpDocument {
  
      /// 문서 글 전체 — `GetTextFile("UNICODE")`. 원문 Unicode JSON 문자열이다.
      #[wasm_bindgen(js_name = getTextFileUnicode)]
@@ -7674,6 +7812,40 @@ index 2031085e3..2a6548e66 100644
      }
  
      /// 문서 글을 한글 스캔 차례로 — `InitScan`·`GetText`·`ReleaseScan` 이 쓴다.
+@@ -7238,6 +7612,33 @@ impl HwpDocument {
+         .map_err(|e| e.into())
+     }
+ 
++    #[wasm_bindgen(js_name = getCellParaPropertiesAtByPath)]
++    pub fn get_cell_para_properties_at_by_path_api(
++        &mut self, section_idx: u32, parent_para_idx: u32, path_json: &str,
++    ) -> Result<String, JsValue> {
++        let path = DocumentCore::parse_cell_path(path_json)?;
++        self.get_cell_para_properties_at_by_path(section_idx as usize, parent_para_idx as usize, &path)
++            .map_err(|e| e.into())
++    }
++
++    #[wasm_bindgen(js_name = applyParaFormatInCellByPath)]
++    pub fn apply_para_format_in_cell_by_path_api(
++        &mut self, section_idx: u32, parent_para_idx: u32, path_json: &str, props_json: &str,
++    ) -> Result<String, JsValue> {
++        let path = DocumentCore::parse_cell_path(path_json)?;
++        self.apply_para_format_in_cell_by_path(section_idx as usize, parent_para_idx as usize, &path, props_json)
++            .map_err(|e| e.into())
++    }
++
++    #[wasm_bindgen(js_name = setCellParaShapeIdByPath)]
++    pub fn set_cell_para_shape_id_by_path_api(
++        &mut self, section_idx: u32, parent_para_idx: u32, path_json: &str, para_shape_id: u16,
++    ) -> Result<String, JsValue> {
++        let path = DocumentCore::parse_cell_path(path_json)?;
++        self.set_cell_para_shape_id_by_path(section_idx as usize, parent_para_idx as usize, &path, para_shape_id)
++            .map_err(|e| e.into())
++    }
++
+     /// 문서에 정의된 스타일 목록을 조회한다.
+     ///
+     /// 반환값: JSON 배열 [{ id, name, englishName, type, paraShapeId, charShapeId }, ...]
 diff --git a/Cargo.toml b/Cargo.toml
 index a00248c..c98733e 100644
 --- a/Cargo.toml
@@ -8616,7 +8788,7 @@ index c6de9bdb5..7ac621c72 100644
    },
    {
 diff --git a/rhwp-studio/src/engine/input-handler.ts b/rhwp-studio/src/engine/input-handler.ts
-index 043ee77ee..f8a7eaef8 100644
+index 043ee77ee..34f83e7b6 100644
 --- a/rhwp-studio/src/engine/input-handler.ts
 +++ b/rhwp-studio/src/engine/input-handler.ts
 @@ -19,6 +19,7 @@ import { VirtualScroll } from '@/view/virtual-scroll';
@@ -8638,7 +8810,32 @@ index 043ee77ee..f8a7eaef8 100644
      startPageX: number;
      startPageY: number;
      lastPageX: number;
-@@ -4831,16 +4833,24 @@ export class InputHandler {
+@@ -2523,12 +2525,23 @@ export class InputHandler {
+   private getParaFormatTargetsForRange(start: DocumentPosition, end: DocumentPosition): ParaFormatTarget[] {
+     if (this.cursor.isInHeaderFooter() || this.cursor.isInFootnote()) return [];
+     if (start.isTextBox || end.isTextBox) return [];
+-    if ((start.cellPath?.length ?? 0) > 1 || (end.cellPath?.length ?? 0) > 1) return [];
+ 
+     const startInCell = start.parentParaIndex !== undefined;
+     const endInCell = end.parentParaIndex !== undefined;
+     if (startInCell || endInCell) {
+       if (!startInCell || !endInCell) return [];
++      if ((start.cellPath?.length ?? 0) > 1 || (end.cellPath?.length ?? 0) > 1) {
++        if (!isSameSelectionCellContainer(start, end)) return [];
++        const path = cellAxisPath(start);
++        const last = path[path.length - 1];
++        const from = Math.min(cellParaIndexOf(start), cellParaIndexOf(end));
++        const to = Math.max(cellParaIndexOf(start), cellParaIndexOf(end));
++        return Array.from({ length: to - from + 1 }, (_, index) => ({
++          kind: 'cell' as const, sec: start.sectionIndex, parentPara: start.parentParaIndex!,
++          controlIdx: last.controlIndex, cellIdx: last.cellIndex, cellParaIdx: from + index,
++          cellPath: withCellPathTarget(path, last.cellIndex, from + index),
++        }));
++      }
+       if (start.sectionIndex !== end.sectionIndex) return [];
+       if (start.parentParaIndex !== end.parentParaIndex) return [];
+       const startPath = start.cellPath?.[0];
+@@ -4831,16 +4844,24 @@ export class InputHandler {
    }
  
    /** 표 캡션 텍스트 편집 모드 진입 (cellIndex=65534로 캡션 구분) */
@@ -8667,7 +8864,7 @@ index 043ee77ee..f8a7eaef8 100644
      });
      this.cursor.resetPreferredX();
      this.updateCaret();
-@@ -4859,6 +4869,8 @@ export class InputHandler {
+@@ -4859,6 +4880,8 @@ export class InputHandler {
    /** 현재 커서 위치를 반환한다 */
    getCursorPosition(): DocumentPosition { return this.cursor.getPosition(); }
  
@@ -8676,7 +8873,7 @@ index 043ee77ee..f8a7eaef8 100644
    /** 별도 좌표계·개체 선택을 본문 링크 편집으로 오인하지 않도록 명시적으로 차단한다. */
    canEditHyperlink(): boolean {
      return !this.cursor.isInHeaderFooter() && !this.cursor.isInFootnote()
-@@ -5476,7 +5488,7 @@ export class InputHandler {
+@@ -5476,7 +5499,7 @@ export class InputHandler {
    performRedo(): void { this.handleRedo(); }
  
    /** 복사 (커맨드 시스템용 — 컨텍스트 메뉴/도구 상자에서 호출) */
@@ -8685,7 +8882,7 @@ index 043ee77ee..f8a7eaef8 100644
      // 개체 선택 모드 → 직접 클립보드 기록 (textarea 포커스 불필요)
      if (this.cursor.isInPictureObjectSelection()) {
        const ref = this.cursor.getSelectedPictureRef();
-@@ -5495,11 +5507,12 @@ export class InputHandler {
+@@ -5495,11 +5518,12 @@ export class InputHandler {
              _keyboard.writeTextHtmlToClipboard(text, markedHtml)
                .catch(() => navigator.clipboard.writeText(text).catch(() => {}));
            }
@@ -8699,7 +8896,7 @@ index 043ee77ee..f8a7eaef8 100644
      }
      if (this.cursor.isInTableObjectSelection()) {
        const ref = this.cursor.getSelectedTableRef();
-@@ -5519,15 +5532,16 @@ export class InputHandler {
+@@ -5519,15 +5543,16 @@ export class InputHandler {
            const markedHtml = _keyboard.prepareRhwpInternalClipboardHtml(this, html, text);
            _keyboard.writeTextHtmlToClipboard(text, markedHtml)
              .catch(() => navigator.clipboard.writeText(text).catch(() => {}));
@@ -8718,7 +8915,7 @@ index 043ee77ee..f8a7eaef8 100644
    }
  
    /** 붙이기 (커맨드 시스템용 — 컨텍스트 메뉴/도구 상자에서 호출) */
-@@ -5568,9 +5582,11 @@ export class InputHandler {
+@@ -5568,9 +5593,11 @@ export class InputHandler {
      if (this.cursor.isInTableObjectSelection()) {
        const ref = this.cursor.getSelectedTableRef();
        if (ref) {
@@ -8733,7 +8930,7 @@ index 043ee77ee..f8a7eaef8 100644
          this.cursor.moveOutOfSelectedTable();
          this.eventBus.emit('table-object-selection-changed', false);
          this.executeOperation({ kind: 'snapshot', operationType: 'cutTable', operation: (wasm: WasmBridge) => {
-@@ -5604,18 +5620,7 @@ export class InputHandler {
+@@ -5604,18 +5631,7 @@ export class InputHandler {
      if (this.cursor.isInTableObjectSelection()) {
        const ref = this.cursor.getSelectedTableRef();
        if (!ref) return;
@@ -8753,7 +8950,7 @@ index 043ee77ee..f8a7eaef8 100644
        return;
      }
      if (this.cursor.hasSelection()) {
-@@ -5623,6 +5628,44 @@ export class InputHandler {
+@@ -5623,6 +5639,44 @@ export class InputHandler {
      }
    }
  
@@ -8798,6 +8995,16 @@ index 043ee77ee..f8a7eaef8 100644
    /** 전체 선택 (커맨드 시스템용) */
    performSelectAll(): void { this.handleSelectAll(); }
  
+@@ -5930,6 +5984,9 @@ export class InputHandler {
+     }
+     const pos = this.cursor.getPosition();
+     if (pos.parentParaIndex !== undefined) {
++      if ((pos.cellPath?.length ?? 0) > 1) {
++        return this.wasm.getCellParaPropertiesAtByPath(pos.sectionIndex, pos.parentParaIndex, JSON.stringify(pos.cellPath));
++      }
+       return this.wasm.getCellParaPropertiesAt(
+         pos.sectionIndex, pos.parentParaIndex, pos.controlIndex!,
+         pos.cellIndex!, pos.cellParaIndex!,
 diff --git a/rhwp-studio/vite.config.ts b/rhwp-studio/vite.config.ts
 index f860fb8fa..202855e83 100644
 --- a/rhwp-studio/vite.config.ts
@@ -11285,7 +11492,7 @@ index 42295aa6d..aa3178337 100644
                  section,
                  para,
 diff --git a/src/document_core/commands/text_editing.rs b/src/document_core/commands/text_editing.rs
-index 9f6f809d7..ed88065c3 100644
+index 9f6f809d7..66a5b8116 100644
 --- a/src/document_core/commands/text_editing.rs
 +++ b/src/document_core/commands/text_editing.rs
 @@ -16,7 +16,8 @@ use crate::model::paragraph::{LineSeg, ParaMeta, Paragraph};
@@ -11330,7 +11537,22 @@ index 9f6f809d7..ed88065c3 100644
              cell_para,
              ParagraphBox::content_width_px(final_width, dpi),
              &styles,
-@@ -5721,10 +5736,15 @@ impl DocumentCore {
+@@ -4559,7 +4574,13 @@ impl DocumentCore {
+             cell_para_idx,
+         )?;
+         let original_vpos = cell_para.line_segs.first().map(|seg| seg.vertical_pos);
+-        let mut new_para = cell_para.split_at(char_offset);
++        let split_offset = if cell_idx == super::super::TABLE_CAPTION_CELL_SENTINEL {
++            // Caption cursor offsets count text; split_at also counts the auto-number control.
++            super::clipboard::text_to_split_logical_offset(cell_para, char_offset, false)
++        } else {
++            char_offset
++        };
++        let mut new_para = cell_para.split_at(split_offset);
+         if let Some(meta) = restore_meta {
+             restore_para_meta(&mut new_para, meta, &self.document.doc_info.para_shapes);
+         }
+@@ -5721,10 +5742,15 @@ impl DocumentCore {
              let is_last = i == path.len() - 1;
              let paragraphs = match para.controls.get_mut(ctrl_idx) {
                  Some(Control::Table(t)) => {
@@ -11350,7 +11572,7 @@ index 9f6f809d7..ed88065c3 100644
                  }
                  Some(Control::Shape(shape)) => {
                      if cell_idx != 0 {
-@@ -5861,6 +5881,7 @@ impl DocumentCore {
+@@ -5861,6 +5887,7 @@ impl DocumentCore {
          );
  
          // 최외곽 표 dirty 마킹
@@ -11358,7 +11580,7 @@ index 9f6f809d7..ed88065c3 100644
          let outer_ctrl = path[0].0;
          self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
  
-@@ -5922,6 +5943,7 @@ impl DocumentCore {
+@@ -5922,6 +5949,7 @@ impl DocumentCore {
              None,
          );
  
@@ -11366,7 +11588,7 @@ index 9f6f809d7..ed88065c3 100644
          let outer_ctrl = path[0].0;
          self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
          self.document.sections[section_idx].raw_stream = None;
-@@ -6000,6 +6022,7 @@ impl DocumentCore {
+@@ -6000,6 +6028,7 @@ impl DocumentCore {
          self.reflow_cell_paragraph_by_path(section_idx, parent_para_idx, path, start_para);
  
          // dirty/이벤트는 delete_text_in_cell_by_path 와 동형(최외곽 컨트롤 기준).
@@ -11374,7 +11596,73 @@ index 9f6f809d7..ed88065c3 100644
          let outer_ctrl = path[0].0;
          self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
          self.document.sections[section_idx].raw_stream = None;
-@@ -6102,6 +6125,7 @@ impl DocumentCore {
+@@ -6035,51 +6064,22 @@ impl DocumentCore {
+             .last()
+             .ok_or_else(|| HwpError::RenderError("경로가 비어있습니다".to_string()))?;
+         let cell_para_idx = last.2;
+-        // [#2755] 리플로우 후 재적용할 원본 vpos(분할 대상 문단 첫 seg).
+-        let mut split_origin_vpos: Option<i32> = None;
+-
+-        // 셀에 접근하여 문단 분할
+-        let section = self
+-            .document
+-            .sections
+-            .get_mut(section_idx)
+-            .ok_or_else(|| HwpError::RenderError("구역 범위 초과".to_string()))?;
+-        let mut para: &mut Paragraph = section
+-            .paragraphs
+-            .get_mut(parent_para_idx)
+-            .ok_or_else(|| HwpError::RenderError("문단 범위 초과".to_string()))?;
+-
+-        // path를 따라 마지막 셀까지 진입
+-        for (i, &(ctrl_idx, cell_idx, _cpi)) in path.iter().enumerate() {
+-            let table = match para.controls.get_mut(ctrl_idx) {
+-                Some(Control::Table(t)) => t.as_mut(),
+-                _ => return Err(HwpError::RenderError("경로: 표가 아닙니다".to_string())),
+-            };
+-            let cell = table
+-                .cells
+-                .get_mut(cell_idx)
+-                .ok_or_else(|| HwpError::RenderError("셀 범위 초과".to_string()))?;
+-            if i == path.len() - 1 {
+-                // 이 셀에서 문단 분할. 리플로우/shift/recalc 는 borrow 해제 후 루프 밖에서 한다.
+-                if cell_para_idx >= cell.paragraphs.len() {
+-                    return Err(HwpError::RenderError("셀문단 범위 초과".to_string()));
+-                }
+-                split_origin_vpos = cell.paragraphs[cell_para_idx]
+-                    .line_segs
+-                    .first()
+-                    .map(|seg| seg.vertical_pos);
+-                let mut new_para = cell.paragraphs[cell_para_idx].split_at(char_offset);
+-                if let Some(meta) = restore_meta {
+-                    restore_para_meta(&mut new_para, meta, &self.document.doc_info.para_shapes);
+-                }
+-                cell.paragraphs.insert(cell_para_idx + 1, new_para);
+-                break;
+-            }
+-            para = cell
+-                .paragraphs
+-                .get_mut(_cpi)
++        let (split_origin_vpos, mut new_para) = {
++            let paragraphs = self.get_cell_paragraphs_mut_by_path(section_idx, parent_para_idx, path)?;
++            let para = paragraphs.get_mut(cell_para_idx)
+                 .ok_or_else(|| HwpError::RenderError("셀문단 범위 초과".to_string()))?;
++            let split_offset = if last.1 == super::super::TABLE_CAPTION_CELL_SENTINEL {
++                super::clipboard::text_to_split_logical_offset(para, char_offset, false)
++            } else {
++                char_offset
++            };
++            (para.line_segs.first().map(|seg| seg.vertical_pos), para.split_at(split_offset))
++        };
++        if let Some(meta) = restore_meta {
++            restore_para_meta(&mut new_para, meta, &self.document.doc_info.para_shapes);
+         }
++        self.get_cell_paragraphs_mut_by_path(section_idx, parent_para_idx, path)?
++            .insert(cell_para_idx + 1, new_para);
+ 
+         // [#2755] flat split 형제(:2387)와 동일하게 분할된 두 문단을 셀 폭으로 재래핑한 뒤
+         // vpos 를 재계산한다(리플로우가 line_segs 를 재작성하므로 shift/recalc 를 그 뒤에 둔다).
+@@ -6102,6 +6102,7 @@ impl DocumentCore {
              Some(cell_para_idx + 1),
          );
  
@@ -11382,7 +11670,71 @@ index 9f6f809d7..ed88065c3 100644
          let outer_ctrl = path[0].0;
          self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
          self.document.sections[section_idx].raw_stream = None;
-@@ -6205,6 +6229,7 @@ impl DocumentCore {
+@@ -6139,51 +6140,19 @@ impl DocumentCore {
+             ));
+         }
+         let prev_idx = cell_para_idx - 1;
+-        // [#2755] 리플로우 후 재적용할 원본 vpos(병합 생존 문단 첫 seg).
+-        let mut merge_origin_vpos: Option<i32> = None;
+-
+-        let section = self
+-            .document
+-            .sections
+-            .get_mut(section_idx)
+-            .ok_or_else(|| HwpError::RenderError("구역 범위 초과".to_string()))?;
+-        let mut para: &mut Paragraph = section
+-            .paragraphs
+-            .get_mut(parent_para_idx)
+-            .ok_or_else(|| HwpError::RenderError("문단 범위 초과".to_string()))?;
+-
+-        let mut merge_point = 0usize;
+-        // 사라지는 문단의 스코프 메타 — undo(split)가 되돌릴 값이다 (Task #2342).
+-        let mut removed_meta: Option<ParaMeta> = None;
+-        for (i, &(ctrl_idx, cell_idx, _cpi)) in path.iter().enumerate() {
+-            let table = match para.controls.get_mut(ctrl_idx) {
+-                Some(Control::Table(t)) => t.as_mut(),
+-                _ => return Err(HwpError::RenderError("경로: 표가 아닙니다".to_string())),
+-            };
+-            let cell = table
+-                .cells
+-                .get_mut(cell_idx)
+-                .ok_or_else(|| HwpError::RenderError("셀 범위 초과".to_string()))?;
+-            if i == path.len() - 1 {
+-                if cell_para_idx >= cell.paragraphs.len() {
+-                    return Err(HwpError::RenderError("셀문단 범위 초과".to_string()));
+-                }
+-                merge_origin_vpos = cell.paragraphs[prev_idx]
+-                    .line_segs
+-                    .first()
+-                    .map(|seg| seg.vertical_pos);
+-                let removed = cell.paragraphs.remove(cell_para_idx);
+-                removed_meta = Some(removed.capture_meta());
+-                let prev = &mut cell.paragraphs[prev_idx];
+-                merge_point = prev.text.chars().count();
+-                prev.merge_from(&removed);
+-                break;
++        let (merge_origin_vpos, merge_point, removed_meta) = {
++            let paragraphs = self.get_cell_paragraphs_mut_by_path(section_idx, parent_para_idx, path)?;
++            if cell_para_idx >= paragraphs.len() {
++                return Err(HwpError::RenderError("셀문단 범위 초과".to_string()));
+             }
+-            para = cell
+-                .paragraphs
+-                .get_mut(_cpi)
+-                .ok_or_else(|| HwpError::RenderError("셀문단 범위 초과".to_string()))?;
+-        }
++            let origin = paragraphs[prev_idx].line_segs.first().map(|seg| seg.vertical_pos);
++            let removed = paragraphs.remove(cell_para_idx);
++            let meta = Some(removed.capture_meta());
++            let prev = &mut paragraphs[prev_idx];
++            let point = prev.text.chars().count();
++            prev.merge_from(&removed);
++            (origin, point, meta)
++        };
+ 
+         // [#2755] flat merge 형제(:2486)와 동일하게 병합 생존 문단을 셀 폭으로 재래핑한 뒤
+         // vpos 를 재계산한다(리플로우가 line_segs 를 재작성하므로 shift/recalc 를 그 뒤에 둔다).
+@@ -6205,6 +6174,7 @@ impl DocumentCore {
              None,
          );
  
@@ -11535,7 +11887,7 @@ index 16f230b54..50af4c287 100644
            <div class="md-item disabled" data-cmd="table:cell-width-equal"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.cellWidthEqual.label">셀 너비를 같게</span><span class="md-shortcut">W</span></div>
            <div class="md-item disabled" data-cmd="table:transpose-copy"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.transposeCopy.label">행/열 바꿈 복사</span></div>
 diff --git a/rhwp-studio/src/core/mutation-method-registry.ts b/rhwp-studio/src/core/mutation-method-registry.ts
-index 2d05c75e1..2dc78b6b1 100755
+index 2d05c75e1..d2fcb05a1 100755
 --- a/rhwp-studio/src/core/mutation-method-registry.ts
 +++ b/rhwp-studio/src/core/mutation-method-registry.ts
 @@ -31,13 +31,14 @@ export const MUTATING_METHODS: readonly string[] = [
@@ -11555,7 +11907,15 @@ index 2d05c75e1..2dc78b6b1 100755
    'evaluateTableFormula',
    // 그림/도형/수식 개체
    'insertPicture', 'assignPictureImage', 'setPictureProperties',
-@@ -123,6 +124,8 @@ export const EXCLUDED_NON_DOCUMENT: readonly string[] = [
+@@ -61,6 +62,7 @@ export const MUTATING_METHODS: readonly string[] = [
+   'setCharShapeIdInCell', 'setCharShapeIdInCellByPath',
+   'setCharShapeRuns', 'setCharShapeRunsInCellByPath',
+   'applyParaFormat', 'setParaShapeId', 'applyParaFormatInCell', 'setCellParaShapeId',
++  'applyParaFormatInCellByPath', 'setCellParaShapeIdByPath',
+   // 스타일/번호 정의 (DocInfo 변이 포함)
+   'updateStyle', 'updateStyleShapes', 'createStyle', 'deleteStyle', 'applyStyle',
+   'applyCellStyle', 'createNumbering', 'ensureDefaultNumbering', 'ensureDefaultBullet',
+@@ -123,6 +125,8 @@ export const EXCLUDED_NON_DOCUMENT: readonly string[] = [
    // [#7002] 내부 클립보드 적재 — 문서는 읽기만 하고 복사본을 코어 버퍼에 담는다.
    'copySelection', 'copySelectionInCell', 'copySelectionInCellByPath',
    'copySelectionInHeaderFooter', 'copyControl', 'copyTableCellsTransposed',
@@ -11565,10 +11925,49 @@ index 2d05c75e1..2dc78b6b1 100755
    'getCellCharPropertiesAtByPath', 'getCharShapeRunsInCellByPath',
  ];
 diff --git a/rhwp-studio/src/engine/command.ts b/rhwp-studio/src/engine/command.ts
-index 6ec166661..e84d8c624 100644
+index 6ec166661..d0e911cc5 100644
 --- a/rhwp-studio/src/engine/command.ts
 +++ b/rhwp-studio/src/engine/command.ts
-@@ -2006,6 +2006,7 @@ export class MoveTableCommand implements EditCommand {
+@@ -1348,7 +1348,7 @@ export class ApplyCharFormatCommand implements EditCommand {
+ 
+ export type ParaFormatTarget =
+   | { kind: 'body'; sec: number; para: number }
+-  | { kind: 'cell'; sec: number; parentPara: number; controlIdx: number; cellIdx: number; cellParaIdx: number };
++  | { kind: 'cell'; sec: number; parentPara: number; controlIdx: number; cellIdx: number; cellParaIdx: number; cellPath?: CellPathEntry[] };
+ 
+ interface ParaShapeHistoryEntry {
+   target: ParaFormatTarget;
+@@ -1359,6 +1359,7 @@ interface ParaShapeHistoryEntry {
+ function getParaShapeId(wasm: WasmBridge, target: ParaFormatTarget): number {
+   const props = target.kind === 'body'
+     ? wasm.getParaPropertiesAt(target.sec, target.para)
++    : target.cellPath ? wasm.getCellParaPropertiesAtByPath(target.sec, target.parentPara, JSON.stringify(target.cellPath))
+     : wasm.getCellParaPropertiesAt(
+         target.sec,
+         target.parentPara,
+@@ -1378,6 +1379,10 @@ function applyParaFormatToTarget(wasm: WasmBridge, target: ParaFormatTarget, pro
+     wasm.applyParaFormat(target.sec, target.para, propsJson);
+     return;
+   }
++  if (target.cellPath) {
++    wasm.applyParaFormatInCellByPath(target.sec, target.parentPara, JSON.stringify(target.cellPath), propsJson);
++    return;
++  }
+   wasm.applyParaFormatInCell(
+     target.sec,
+     target.parentPara,
+@@ -1393,6 +1398,10 @@ function restoreParaShapeId(wasm: WasmBridge, target: ParaFormatTarget, paraShap
+     wasm.setParaShapeId(target.sec, target.para, paraShapeId);
+     return;
+   }
++  if (target.cellPath) {
++    wasm.setCellParaShapeIdByPath(target.sec, target.parentPara, JSON.stringify(target.cellPath), paraShapeId);
++    return;
++  }
+   wasm.setCellParaShapeId(
+     target.sec,
+     target.parentPara,
+@@ -2006,6 +2015,7 @@ export class MoveTableCommand implements EditCommand {
  
    private resultPpi: number;
    private resultCi: number;
@@ -11576,7 +11975,7 @@ index 6ec166661..e84d8c624 100644
  
    constructor(
      private sec: number,
-@@ -2016,17 +2017,24 @@ export class MoveTableCommand implements EditCommand {
+@@ -2016,17 +2026,24 @@ export class MoveTableCommand implements EditCommand {
      resultPpi: number,
      resultCi: number,
      timestamp?: number,
@@ -11603,7 +12002,7 @@ index 6ec166661..e84d8c624 100644
    }
  
    undo(wasm: WasmBridge): DocumentPosition {
-@@ -2035,10 +2043,21 @@ export class MoveTableCommand implements EditCommand {
+@@ -2035,10 +2052,21 @@ export class MoveTableCommand implements EditCommand {
      // stale this.ppi/this.ci 를 그대로 반환했다. 표 이동과 문단 구조 변경(삽입/삭제/병합)이
      // 같은 세션에서 섞이면 undo 후 커서가 존재하지 않거나 엉뚱한 문단을 가리킬 수 있다 —
      // execute() 와 대칭으로 반환값을 캡처해 this.ppi/this.ci 를 갱신한다.
@@ -11627,7 +12026,7 @@ index 6ec166661..e84d8c624 100644
    }
  
    mergeWith(other: EditCommand): EditCommand | null {
-@@ -2046,6 +2065,7 @@ export class MoveTableCommand implements EditCommand {
+@@ -2046,6 +2074,7 @@ export class MoveTableCommand implements EditCommand {
      if (other.sec !== this.sec) return null;
      // 연속 이동: 이전 결과 위치 == 다음 시작 위치
      if (other.ppi !== this.resultPpi || other.ci !== this.resultCi) return null;
@@ -11635,7 +12034,7 @@ index 6ec166661..e84d8c624 100644
      if (other.timestamp - this.timestamp > 500) return null;
  
      return new MoveTableCommand(
-@@ -2054,6 +2074,7 @@ export class MoveTableCommand implements EditCommand {
+@@ -2054,6 +2083,7 @@ export class MoveTableCommand implements EditCommand {
        this.deltaV + other.deltaV,
        other.resultPpi, other.resultCi,
        this.timestamp,
@@ -11644,10 +12043,47 @@ index 6ec166661..e84d8c624 100644
    }
  }
 diff --git a/rhwp-studio/src/engine/cursor.ts b/rhwp-studio/src/engine/cursor.ts
-index 22c194744..e70994f72 100644
+index 22c194744..791d79729 100644
 --- a/rhwp-studio/src/engine/cursor.ts
 +++ b/rhwp-studio/src/engine/cursor.ts
-@@ -1846,9 +1846,15 @@ export class CursorState {
+@@ -856,11 +856,7 @@ export class CursorState {
+       // End 키 후 Home 키 시 getLineInfo 가 다음 줄로 판정하여 charStart = 현재 위치 → 미이동.
+       // atLineEnd 플래그가 설정된 상태에서 현재 위치가 줄 시작과 동일하면 이전 줄로 판정.
+       if (this.atLineEnd && pos.charOffset === lineInfo.charStart && pos.charOffset > 0) {
+-        const prevLineInfo = this.isInCell()
+-          ? this.wasm.getLineInfoInCell(
+-              pos.sectionIndex, pos.parentParaIndex!, pos.controlIndex!,
+-              pos.cellIndex!, pos.cellParaIndex!, pos.charOffset - 1)
+-          : this.wasm.getLineInfo(pos.sectionIndex, pos.paragraphIndex, pos.charOffset - 1);
++        const prevLineInfo = this.getLineInfoForOffset(pos, pos.charOffset - 1);
+         if (prevLineInfo.charEnd === pos.charOffset) {
+           lineInfo = prevLineInfo;
+         }
+@@ -905,6 +901,11 @@ export class CursorState {
+   }
+ 
+   private getLineInfoForOffset(pos: DocumentPosition, charOffset: number): LineInfo {
++    if ((pos.cellPath?.length ?? 0) > 1) {
++      return this.wasm.getLineInfoInCellByPath(
++        pos.sectionIndex, pos.parentParaIndex!, JSON.stringify(pos.cellPath), charOffset,
++      );
++    }
+     const inCell = (pos.cellPath?.length ?? 0) > 0 || pos.parentParaIndex !== undefined;
+     if (inCell) {
+       return this.wasm.getLineInfoInCell(
+@@ -919,6 +920,11 @@ export class CursorState {
+   private getCursorRectOnVisualLine(lineIndex: number, atEnd: boolean): CursorRect | null {
+     const pos = this.position;
+     try {
++      if ((pos.cellPath?.length ?? 0) > 1) {
++        return this.wasm.getCursorRectOnLineByPath(
++          pos.sectionIndex, pos.parentParaIndex!, JSON.stringify(pos.cellPath), lineIndex, atEnd,
++        );
++      }
+       return this.wasm.getCursorRectOnLine(
+         pos.sectionIndex,
+         pos.paragraphIndex,
+@@ -1846,9 +1852,15 @@ export class CursorState {
    }
  
    /** 표 이동 후 selectedTableRef의 ppi/ci를 갱신한다. */
@@ -11908,3 +12344,218 @@ index fc08501c9..5489238c5 100644
    background: var(--color-surface);
    border: 1px solid var(--ui-border);
    box-shadow: var(--shadow-dropdown);
+diff --git a/src/document_core/commands/formatting.rs b/src/document_core/commands/formatting.rs
+index 95cce1d58..3c21e62fb 100644
+--- a/src/document_core/commands/formatting.rs
++++ b/src/document_core/commands/formatting.rs
+@@ -281,6 +281,16 @@ impl DocumentCore {
+         Ok(self.build_para_properties_json(para.para_shape_id, sec_idx))
+     }
+ 
++    pub fn get_cell_para_properties_at_by_path(
++        &mut self,
++        sec_idx: usize,
++        parent_para_idx: usize,
++        path: &[(usize, usize, usize)],
++    ) -> Result<String, HwpError> {
++        let id = self.get_cell_paragraph_mut_by_path(sec_idx, parent_para_idx, path)?.para_shape_id;
++        Ok(self.build_para_properties_json(id, sec_idx))
++    }
++
+     /// 글자 속성 JSON 생성 헬퍼
+     pub(crate) fn build_char_properties_json(
+         &self,
+@@ -1859,6 +1869,88 @@ impl DocumentCore {
+         Ok("{\"ok\":true}".to_string())
+     }
+ 
++    pub fn apply_para_format_in_cell_by_path(
++        &mut self,
++        sec_idx: usize,
++        parent_para_idx: usize,
++        path: &[(usize, usize, usize)],
++        props_json: &str,
++    ) -> Result<String, HwpError> {
++        if path.len() == 1 {
++            let (control_idx, cell_idx, cell_para_idx) = path[0];
++            return self.apply_para_format_in_cell_native(
++                sec_idx, parent_para_idx, control_idx, cell_idx, cell_para_idx, props_json,
++            );
++        }
++        // Validate the complete target before creating document-wide style definitions.
++        let base_id = self.get_cell_paragraph_mut_by_path(sec_idx, parent_para_idx, path)?.para_shape_id;
++        let mut mods = parse_para_shape_mods(props_json);
++        if json_has_tab_keys(props_json) {
++            let base_tab_id = self.document.doc_info.para_shapes.get(base_id as usize)
++                .map(|ps| ps.tab_def_id).unwrap_or(0);
++            let tab_def = build_tab_def_from_json(props_json, base_tab_id, &self.document.doc_info.tab_defs);
++            mods.tab_def_id = Some(self.document.find_or_create_tab_def(tab_def));
++        }
++        if json_has_border_keys(props_json) {
++            mods.border_fill_id = Some(self.create_border_fill_from_json(props_json));
++        }
++        if let Some(arr) = parse_json_i16_array(props_json, "borderSpacing", 4) {
++            mods.border_spacing = Some([arr[0], arr[1], arr[2], arr[3]]);
++        }
++        let new_id = self.document.find_or_create_para_shape(base_id, &mods);
++        let affects_vpos = self.document.doc_info.para_shapes.get(base_id as usize).is_none_or(|old| {
++            cell_para_shape_affects_vpos(old, &self.document.doc_info.para_shapes[new_id as usize])
++        });
++        let (old_indent, new_indent) = self.para_shape_indents(base_id, new_id);
++        let para = self.get_cell_paragraph_mut_by_path(sec_idx, parent_para_idx, path)?;
++        para.para_shape_id = new_id;
++        restamp_indentation(&mut para.line_segs, old_indent, new_indent);
++        para.cell_format_vpos_dirty |= affects_vpos;
++        if para_shape_mods_affect_text_flow(&mods) {
++            self.reflow_cell_paragraph_by_path(sec_idx, parent_para_idx, path, path.last().unwrap().2);
++        }
++        self.pending_cell_format_vpos |= affects_vpos;
++        self.mark_cell_control_dirty(sec_idx, parent_para_idx, path[0].0);
++        self.document.sections[sec_idx].raw_stream = None;
++        self.rebuild_section_deferred_in_batch(sec_idx);
++        self.event_log.push(DocumentEvent::ParaFormatChanged { section: sec_idx, para: parent_para_idx });
++        Ok("{\"ok\":true}".to_string())
++    }
++
++    pub fn set_cell_para_shape_id_by_path(
++        &mut self,
++        sec_idx: usize,
++        parent_para_idx: usize,
++        path: &[(usize, usize, usize)],
++        para_shape_id: u16,
++    ) -> Result<String, HwpError> {
++        if path.len() == 1 {
++            let (control_idx, cell_idx, cell_para_idx) = path[0];
++            return self.set_cell_para_shape_id_native(
++                sec_idx, parent_para_idx, control_idx, cell_idx, cell_para_idx, para_shape_id,
++            );
++        }
++        if para_shape_id as usize >= self.document.doc_info.para_shapes.len() {
++            return Err(HwpError::RenderError(format!("문단 모양 ID {} 범위 초과", para_shape_id)));
++        }
++        let old_id = self.get_cell_paragraph_mut_by_path(sec_idx, parent_para_idx, path)?.para_shape_id;
++        let affects_vpos = self.document.doc_info.para_shapes.get(old_id as usize).is_none_or(|old| {
++            cell_para_shape_affects_vpos(old, &self.document.doc_info.para_shapes[para_shape_id as usize])
++        });
++        let (old_indent, new_indent) = self.para_shape_indents(old_id, para_shape_id);
++        let para = self.get_cell_paragraph_mut_by_path(sec_idx, parent_para_idx, path)?;
++        para.para_shape_id = para_shape_id;
++        restamp_indentation(&mut para.line_segs, old_indent, new_indent);
++        para.cell_format_vpos_dirty |= affects_vpos;
++        self.reflow_cell_paragraph_by_path(sec_idx, parent_para_idx, path, path.last().unwrap().2);
++        self.pending_cell_format_vpos |= affects_vpos;
++        self.mark_cell_control_dirty(sec_idx, parent_para_idx, path[0].0);
++        self.document.sections[sec_idx].raw_stream = None;
++        self.rebuild_section_deferred_in_batch(sec_idx);
++        self.event_log.push(DocumentEvent::ParaFormatChanged { section: sec_idx, para: parent_para_idx });
++        Ok("{\"ok\":true}".to_string())
++    }
++
+     /// 문서 내 동일 style_id를 사용하는 기존 문단의 para_shape_id를 찾는다.
+     fn find_reference_para_shape_for_style(&self, style_id: usize) -> Option<u16> {
+         use crate::model::control::Control;
+diff --git a/src/document_core/commands/clipboard.rs b/src/document_core/commands/clipboard.rs
+index 4a0ede6af..32dac4651 100644
+--- a/src/document_core/commands/clipboard.rs
++++ b/src/document_core/commands/clipboard.rs
+@@ -174,7 +174,7 @@ pub(super) fn strip_structural_controls_for_text_clipboard(para: &mut Paragraph)
+ }
+ 
+ /// `after_control` 이면 `text_offset` 자리에 놓인 개체 뒤를 가리킨다.
+-fn text_to_split_logical_offset(
++pub(super) fn text_to_split_logical_offset(
+     para: &Paragraph,
+     text_offset: usize,
+     after_control: bool,
+diff --git a/src/document_core/queries/cursor_rect.rs b/src/document_core/queries/cursor_rect.rs
+index d4d46931d..79c81ef64 100644
+--- a/src/document_core/queries/cursor_rect.rs
++++ b/src/document_core/queries/cursor_rect.rs
+@@ -3551,6 +3551,38 @@ impl DocumentCore {
+         path_json: &str,
+         char_offset: usize,
+         hint_page: Option<u32>,
++    ) -> Result<String, HwpError> {
++        self.get_cursor_rect_by_path_on_line(
++            section_idx, parent_para_idx, path_json, char_offset, hint_page, None,
++        )
++    }
++
++    pub(crate) fn get_cursor_rect_on_line_by_path_native(
++        &self,
++        section_idx: usize,
++        parent_para_idx: usize,
++        path_json: &str,
++        line_index: usize,
++        at_end: bool,
++    ) -> Result<String, HwpError> {
++        let path = Self::parse_cell_path(path_json)?;
++        let para = self.resolve_paragraph_by_path(section_idx, parent_para_idx, &path)?;
++        let line_count = Self::build_line_char_starts(para).len().max(1);
++        let range = Self::get_line_char_range(para, line_index.min(line_count - 1));
++        let offset = if at_end { range.1 } else { range.0 };
++        self.get_cursor_rect_by_path_on_line(
++            section_idx, parent_para_idx, path_json, offset, None, Some(range),
++        )
++    }
++
++    fn get_cursor_rect_by_path_on_line(
++        &self,
++        section_idx: usize,
++        parent_para_idx: usize,
++        path_json: &str,
++        char_offset: usize,
++        hint_page: Option<u32>,
++        line_range: Option<(usize, usize)>,
+     ) -> Result<String, HwpError> {
+         use crate::renderer::layout::{CellContext, CellPathEntry};
+         use crate::renderer::render_tree::{RenderNode, RenderNodeType};
+@@ -3695,6 +3727,7 @@ impl DocumentCore {
+             parent_para: usize,
+             path: &[(usize, usize, usize)],
+             offset: usize,
++            line_range: Option<(usize, usize)>,
+             page: u32,
+             current_table_ctx: Option<CellContext>,
+             current_cell_ctx: Option<CellContext>,
+@@ -3731,7 +3764,10 @@ impl DocumentCore {
+                     tr.char_start,
+                 ) {
+                     let cc = effective_char_count(tr);
+-                    if offset >= cs && offset <= cs + cc {
++                    let on_line = line_range.map_or(true, |(start, end)| {
++                        if start == end { cs == start } else { cs < end && cs + cc > start }
++                    });
++                    if on_line && offset >= cs && offset <= cs + cc {
+                         let positions = if tr.char_overlap.is_some() && cc == 1 {
+                             vec![0.0, node.bbox.width]
+                         } else {
+@@ -3750,7 +3786,11 @@ impl DocumentCore {
+                             node.bbox.x + xr,
+                             node.bbox.y,
+                             node.bbox.height,
+-                            child_cell_bounds,
++                            if path.last().is_some_and(|entry| entry.1 == 65534) {
++                                None
++                            } else {
++                                child_cell_bounds
++                            },
+                         ));
+                     }
+                 }
+@@ -3763,6 +3803,7 @@ impl DocumentCore {
+                     parent_para,
+                     path,
+                     offset,
++                    line_range,
+                     page,
+                     table_ctx.clone(),
+                     child_cell_ctx.clone(),
+@@ -3783,6 +3824,7 @@ impl DocumentCore {
+                 parent_para_idx,
+                 &path,
+                 char_offset,
++                line_range,
+                 page_num,
+                 None,
+                 None,
