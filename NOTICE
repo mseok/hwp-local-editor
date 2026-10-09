@@ -1,0 +1,7 @@
+HWP Local Editor contains modifications and excerpts from rhwp by Edward Kim.
+Upstream source: https://github.com/edwardkim/rhwp
+Pinned release: v0.8.7, commit 1a76570e833917d15817415a53c09ad61ab3203f
+The parser, renderer, Studio UI and SDK are upstream rhwp components.
+Local additions include the browser shell, command-journal recovery, multi-document isolation and layout corrections.
+See licenses/rhwp-MIT.txt and licenses/rhwp-THIRD_PARTY_LICENSES.md.
+No affiliation with or endorsement by Hancom is implied.

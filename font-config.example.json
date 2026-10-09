@@ -1,0 +1,12 @@
+{
+  "faces": [
+    {
+      "family": "Your Licensed Font",
+      "fullName": "Your Licensed Font Regular",
+      "postscriptName": "",
+      "style": "Regular",
+      "weight": 400,
+      "path": "/absolute/path/to/your-font.ttf"
+    }
+  ]
+}

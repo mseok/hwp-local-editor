@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>HWP 패널 편집기</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #202632; font: 14px -apple-system, BlinkMacSystemFont, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+    header { background: #fff; padding: 12px 16px; border-bottom: 1px solid #dce1e8; flex: none; }
+    h1 { margin: 0 0 10px; font-size: 17px; }
+    .controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    button, .button { border: 1px solid #cbd3df; border-radius: 6px; background: #fff; color: inherit; padding: 7px 10px; cursor: pointer; font: inherit; text-decoration: none; }
+    button:disabled { cursor: default; opacity: .5; }
+    #save { background: #1749a0; color: white; }
+    #status { margin: 8px 0; font-size: 13px; }
+    .note { margin: 0; color: #69758a; font-size: 12px; }
+    #editor { flex: 1; min-height: 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>HWP 패널 편집기</h1>
+    <div class="controls">
+      <button id="save" disabled>수정본 다운로드</button>
+      <button id="open" disabled>다른 파일 열기</button>
+      <a class="button" href="/editor" target="_blank" rel="noopener">새 문서 창</a>
+      <select id="copies" aria-label="저장된 작업 사본"><option value="">저장된 작업 사본</option></select>
+      <a class="button" id="resume" target="_blank" rel="noopener" hidden>사본 열기</a>
+      <a class="button" id="back" href="/">미리보기</a>
+      <input id="file" type="file" accept=".hwp,.hwpx" hidden>
+    </div>
+    <p id="status">로컬 편집기를 준비하고 있습니다.</p>
+    <p class="note">변경 내용은 이 브라우저에 자동 저장됩니다. 원본 파일은 보존되며, 완성 파일은 ‘수정본 다운로드’로 받으세요. 여러 문서는 별도 창에서 작업할 수 있습니다.</p>
+  </header>
+  <main id="editor"></main>
+  <script type="module" src="/editor.mjs"></script>
+</body>
+</html>

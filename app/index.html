@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>HWP 백그라운드 미리보기</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #eef1f5; color: #202632; font: 14px -apple-system, BlinkMacSystemFont, sans-serif; }
+    header { position: sticky; top: 0; z-index: 2; padding: 16px 20px; background: #fff; border-bottom: 1px solid #dce1e8; }
+    h1 { font-size: 18px; margin: 0 0 12px; }
+    .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    select, button, .file { border: 1px solid #cbd3df; background: #fff; border-radius: 6px; padding: 8px 10px; color: inherit; font: inherit; cursor: pointer; }
+    select { max-width: 100%; }
+    a.button { display: inline-block; border: 1px solid #cbd3df; background: #fff; border-radius: 6px; padding: 8px 10px; color: inherit; text-decoration: none; }
+    input[type=file] { display: none; }
+    #status { margin: 12px 0 0; color: #41506a; }
+    .note { margin: 10px 0 0; font-size: 12px; color: #69758a; }
+    #pages { margin: 20px auto; padding: 0 12px; max-width: 1040px; }
+    .page { margin: 0 0 24px; }
+    .page-label { margin: 0 0 8px; color: #67758c; font-size: 12px; }
+    .paper { background: white; box-shadow: 0 2px 12px #1c315218; }
+    .paper > svg { display: block; width: 100%; height: auto; }
+    #native { display: none; width: 100%; height: calc(100vh - 180px); border: 0; background: white; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>HWP 백그라운드 미리보기</h1>
+    <div class="controls">
+      <select id="documents" aria-label="문서 선택" hidden></select>
+      <label class="file">다른 HWP/HWPX 열기<input id="file" type="file" accept=".hwp,.hwpx"></label>
+      <button id="native-button" hidden disabled>기존 한컴 PDF 보기</button>
+      <button id="preview-button" hidden>미리보기로 돌아가기</button>
+      <button id="retry" hidden>다시 시도</button>
+      <a class="button" id="edit-button" href="/editor">편집기로 열기</a>
+    </div>
+    <p id="status">렌더러를 준비하고 있습니다.</p>
+    <p class="note">원본은 보존하며 파일은 로컬에서 처리합니다. 한컴과 쪽 배치가 다를 수 있습니다.</p>
+  </header>
+  <main id="pages"></main>
+  <iframe id="native" title="기존 한컴 PDF"></iframe>
+  <script type="module" src="/viewer.mjs"></script>
+</body>
+</html>

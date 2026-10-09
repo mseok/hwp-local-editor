@@ -1,0 +1,17 @@
+{
+  "name": "hwp-local-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node app/server.mjs",
+    "test": "node --experimental-transform-types --test tests/*.test.mjs",
+    "audit": "node scripts/audit-public.mjs",
+    "test:browser": "node tests/browser.mjs"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/edwardkim/rhwp.git",
+  "commit": "1a76570e833917d15817415a53c09ad61ab3203f",
+  "version": "0.8.7",
+  "wasmBindgen": "0.2.127"
+}
