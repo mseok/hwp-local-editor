@@ -1,5 +1,5 @@
 diff --git a/rhwp-studio/src/core/wasm-bridge.ts b/rhwp-studio/src/core/wasm-bridge.ts
-index 58162bab6..ddadf5a21 100644
+index 58162bab6..a64f39122 100644
 --- a/rhwp-studio/src/core/wasm-bridge.ts
 +++ b/rhwp-studio/src/core/wasm-bridge.ts
 @@ -10,6 +10,7 @@ import type { HyperlinkTarget, HyperlinkContext } from './hyperlink';
@@ -99,7 +99,19 @@ index 58162bab6..ddadf5a21 100644
    /**
     * 플러그인 차용용 문서 핸들.
     *
-@@ -1907,6 +1947,11 @@ export class WasmBridge {
+@@ -1897,6 +1937,11 @@ export class WasmBridge {
+     return JSON.parse(this.doc.deleteTableControl(sec, parentPara, controlIdx));
+   }
+ 
++  deleteCellTableControlByPath(sec: number, parentPara: number, cellPath: CellPathLike, innerControlIdx: number): { ok: boolean } {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse((this.doc as any).deleteCellTableControlByPath(sec, parentPara, JSON.stringify(cellPath), innerControlIdx));
++  }
++
+   getCellProperties(sec: number, parentPara: number, controlIdx: number, cellIdx: number): CellProperties {
+     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
+     return JSON.parse(this.doc.getCellProperties(sec, parentPara, controlIdx, cellIdx));
+@@ -1907,6 +1952,11 @@ export class WasmBridge {
      return JSON.parse((this.doc as any).getCellPropertiesByPath(sec, parentPara, pathJson, cellIdx));
    }
  
@@ -111,7 +123,7 @@ index 58162bab6..ddadf5a21 100644
    getCellOwnProperties(sec: number, parentPara: number, controlIdx: number, cellIdx: number): CellProperties {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      const doc = this.doc as unknown as {
-@@ -2064,6 +2109,16 @@ export class WasmBridge {
+@@ -2064,6 +2114,16 @@ export class WasmBridge {
      return JSON.parse(this.doc.getTableProperties(sec, parentPara, controlIdx));
    }
  
@@ -128,7 +140,7 @@ index 58162bab6..ddadf5a21 100644
    getTableSignature(sec: number, parentPara: number, controlIdx: number): string {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      const d = this.doc as unknown as { getTableSignature?: (a: number, b: number, c: number) => string };
-@@ -2078,6 +2133,26 @@ export class WasmBridge {
+@@ -2078,6 +2138,26 @@ export class WasmBridge {
      return JSON.parse(this.doc.setTableProperties(sec, parentPara, controlIdx, JSON.stringify(props)));
    }
  
@@ -155,7 +167,7 @@ index 58162bab6..ddadf5a21 100644
    mergeTableCells(sec: number, parentPara: number, controlIdx: number, startRow: number, startCol: number, endRow: number, endCol: number): { ok: boolean; cellCount: number } {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      return JSON.parse(this.doc.mergeTableCells(sec, parentPara, controlIdx, startRow, startCol, endRow, endCol));
-@@ -2182,6 +2257,36 @@ export class WasmBridge {
+@@ -2182,6 +2262,36 @@ export class WasmBridge {
      return JSON.parse(this.doc.mergeTableWithNext(sec, parentPara, controlIdx));
    }
  
@@ -192,7 +204,7 @@ index 58162bab6..ddadf5a21 100644
    insertTableRow(sec: number, parentPara: number, controlIdx: number, rowIdx: number, below: boolean): { ok: boolean; rowCount: number; colCount: number } {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      return JSON.parse(this.doc.insertTableRow(sec, parentPara, controlIdx, rowIdx, below));
-@@ -3782,9 +3887,9 @@ export class WasmBridge {
+@@ -3782,9 +3892,9 @@ export class WasmBridge {
     * cellContext 가 실리므로 호출자는 셀 좌표로 커서를 옮길 수 있어야 한다.
     * 기본값은 종전대로 본문만 — 셀 이동을 못 하는 호출자가 무회귀로 남는다.
     */
@@ -7514,7 +7526,7 @@ index dffc08cd0..7e8bd19b5 100644
      this.countInput.min = '1';
      this.countInput.max = String(MAX_INSERT_COUNT);
 diff --git a/rhwp-studio/src/command/commands/table.ts b/rhwp-studio/src/command/commands/table.ts
-index c6de9bdb5..11012938b 100644
+index c6de9bdb5..bd5c15c98 100644
 --- a/rhwp-studio/src/command/commands/table.ts
 +++ b/rhwp-studio/src/command/commands/table.ts
 @@ -1,4 +1,5 @@
@@ -8035,8 +8047,38 @@ index c6de9bdb5..11012938b 100644
            },
          });
        }, '표 붙이기');
+@@ -896,28 +808,7 @@ export const tableCommands: CommandDef[] = [
+     execute(services) {
+       const ih = services.getInputHandler();
+       if (!ih) return;
+-      const ref = ih.getSelectedTableRef();
+-      if (ref) {
+-        safeTableOp(() => ih.executeOperation({
+-          kind: 'snapshot',
+-          operationType: 'deleteTable',
+-          operation: (wasm) => {
+-            wasm.deleteTableControl(ref.sec, ref.ppi, ref.ci);
+-            return { sectionIndex: ref.sec, paragraphIndex: ref.ppi, charOffset: 0 };
+-          },
+-        }), '표 지우기');
+-        return;
+-      }
+-      const pos = ih.getCursorPosition();
+-      if (pos.parentParaIndex === undefined || pos.controlIndex === undefined) return;
+-      safeTableOp(() => ih.executeOperation({
+-        kind: 'snapshot',
+-        operationType: 'deleteTable',
+-        operation: (wasm) => {
+-          wasm.deleteTableControl(pos.sectionIndex, pos.parentParaIndex!, pos.controlIndex!);
+-          return { sectionIndex: pos.sectionIndex, paragraphIndex: pos.parentParaIndex!, charOffset: 0 };
+-        },
+-      }), '표 지우기');
++      safeTableOp(() => ih.deleteCurrentTable(), '표 지우기');
+     },
+   },
+   {
 diff --git a/rhwp-studio/src/engine/input-handler.ts b/rhwp-studio/src/engine/input-handler.ts
-index 043ee77ee..ba5e14dc6 100644
+index 043ee77ee..1650b0c61 100644
 --- a/rhwp-studio/src/engine/input-handler.ts
 +++ b/rhwp-studio/src/engine/input-handler.ts
 @@ -4859,6 +4859,8 @@ export class InputHandler {
@@ -8048,6 +8090,71 @@ index 043ee77ee..ba5e14dc6 100644
    /** 별도 좌표계·개체 선택을 본문 링크 편집으로 오인하지 않도록 명시적으로 차단한다. */
    canEditHyperlink(): boolean {
      return !this.cursor.isInHeaderFooter() && !this.cursor.isInFootnote()
+@@ -5604,18 +5606,7 @@ export class InputHandler {
+     if (this.cursor.isInTableObjectSelection()) {
+       const ref = this.cursor.getSelectedTableRef();
+       if (!ref) return;
+-      if (ref.cellPath && ref.cellPath.length > 1) {
+-        this.cursor.moveOutOfSelectedTable();
+-        this.eventBus.emit('table-object-selection-changed', false);
+-        this.updateCaret();
+-        return;
+-      }
+-      this.cursor.moveOutOfSelectedTable();
+-      this.eventBus.emit('table-object-selection-changed', false);
+-      this.executeOperation({ kind: 'snapshot', operationType: 'deleteTable', operation: (wasm: WasmBridge) => {
+-        wasm.deleteTableControl(ref.sec, ref.ppi, ref.ci);
+-        return this.cursor.getPosition();
+-      }});
++      this.deleteCurrentTable();
+       return;
+     }
+     if (this.cursor.hasSelection()) {
+@@ -5623,6 +5614,44 @@ export class InputHandler {
+     }
+   }
+ 
++  /** Delete the selected table, then resume in its enclosing paragraph. */
++  deleteCurrentTable(): void {
++    const pos = this.cursor.getPosition();
++    const ref = this.cursor.getSelectedTableRef();
++    const sec = ref?.sec ?? pos.sectionIndex;
++    const ppi = ref?.ppi ?? pos.parentParaIndex;
++    const ci = ref?.ci ?? pos.controlIndex;
++    if (ppi === undefined || ci === undefined) return;
++    const path = ref ? ref.cellPath : pos.cellPath;
++    this.executeOperation({ kind: 'snapshot', operationType: 'deleteTable', operation: (wasm: WasmBridge) => {
++      let after: DocumentPosition;
++      if (path && path.length > 1) {
++        const host = path.slice(0, -1);
++        const last = host[host.length - 1];
++        wasm.deleteCellTableControlByPath(sec, ppi, host, path[path.length - 1].controlIndex);
++        after = {
++          sectionIndex: sec, paragraphIndex: last.cellParaIndex, charOffset: 0,
++          parentParaIndex: ppi, controlIndex: host[0].controlIndex,
++          cellIndex: last.cellIndex, cellParaIndex: last.cellParaIndex, cellPath: host,
++          isTextBox: pos.isTextBox && host.length === 1 ? true : undefined,
++        };
++      } else {
++        wasm.deleteTableControl(sec, ppi, ci);
++        if (ref) {
++          this.cursor.moveOutOfSelectedTable();
++          after = this.cursor.getPosition();
++        } else {
++          after = { sectionIndex: sec, paragraphIndex: ppi, charOffset: 0 };
++        }
++      }
++      this.clearTextSelection();
++      this.cursor.exitTableObjectSelection();
++      this.tableObjectRenderer?.clear();
++      this.eventBus.emit('table-object-selection-changed', false);
++      return after;
++    }});
++  }
++
+   /** 전체 선택 (커맨드 시스템용) */
+   performSelectAll(): void { this.handleSelectAll(); }
+ 
 diff --git a/rhwp-studio/vite.config.ts b/rhwp-studio/vite.config.ts
 index f860fb8fa..202855e83 100644
 --- a/rhwp-studio/vite.config.ts
@@ -10108,15 +10215,29 @@ index 7fd48f994..6826d4379 100755
            this.cursor.moveToCellPrev();
          } else if (insertRowAfterLastTableCellByTab.call(this)) {
 diff --git a/rhwp-studio/index.html b/rhwp-studio/index.html
-index 16f230b54..df427e273 100644
+index 16f230b54..50af4c287 100644
 --- a/rhwp-studio/index.html
 +++ b/rhwp-studio/index.html
-@@ -391,6 +391,8 @@
+@@ -391,6 +391,9 @@
            <div class="md-sep"></div>
            <div class="md-item disabled" data-cmd="table:cell-split"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.cellSplit.label">셀 나누기</span><span class="md-shortcut">S</span></div>
            <div class="md-item disabled" data-cmd="table:cell-merge"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.cellMerge.label">셀 합치기</span><span class="md-shortcut">M</span></div>
 +          <div class="md-item disabled" data-cmd="table:split"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.split.registryLabel">표 나누기</span><span class="md-shortcut">Ctrl+M,A</span></div>
 +          <div class="md-item disabled" data-cmd="table:attach"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.attach.registryLabel">표 붙이기</span><span class="md-shortcut">Ctrl+M,Z</span></div>
++          <div class="md-item disabled" data-cmd="table:delete"><span class="md-icon icon-delete"></span><span class="md-label" data-i18n="command.table.delete.registryLabel">표 지우기</span></div>
            <div class="md-item disabled" data-cmd="table:cell-height-equal"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.cellHeightEqual.label">셀 높이를 같게</span><span class="md-shortcut">H</span></div>
            <div class="md-item disabled" data-cmd="table:cell-width-equal"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.cellWidthEqual.label">셀 너비를 같게</span><span class="md-shortcut">W</span></div>
            <div class="md-item disabled" data-cmd="table:transpose-copy"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.transposeCopy.label">행/열 바꿈 복사</span></div>
+diff --git a/rhwp-studio/src/core/mutation-method-registry.ts b/rhwp-studio/src/core/mutation-method-registry.ts
+index 2d05c75e1..fb1d7fd59 100755
+--- a/rhwp-studio/src/core/mutation-method-registry.ts
++++ b/rhwp-studio/src/core/mutation-method-registry.ts
+@@ -31,7 +31,7 @@ export const MUTATING_METHODS: readonly string[] = [
+   'splitParagraphInCell', 'mergeParagraphInCell', 'splitParagraphInCellByPath',
+   'mergeParagraphInCellByPath',
+   // 표 구조/속성
+-  'createTable', 'createTableEx', 'deleteTableControl', 'insertTableRow', 'splitTable', 'mergeTableWithNext',
++  'createTable', 'createTableEx', 'deleteTableControl', 'deleteCellTableControlByPath', 'insertTableRow', 'splitTable', 'mergeTableWithNext',
+   'insertTableColumn', 'deleteTableRow', 'deleteTableColumn', 'mergeTableCells',
+   'splitTableCell', 'splitTableCellInto', 'splitTableCellsInRange', 'resizeTableCells',
+   'resizeTableCellsByPath', // [#7189] 중첩 표 셀 크기 조절 — 평면 resizeTableCells 의 경로 변형

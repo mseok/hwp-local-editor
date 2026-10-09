@@ -4,6 +4,8 @@ A local HWP/HWPX browser editor for Codex/Claude computer-use workflows, with in
 
 This repository contains the local shell and source patches against rhwp v0.8.7. It is not a reimplementation of the rhwp engine, nor an official Hancom product.
 
+The full agent-workflow goal and outstanding completion gates are tracked in [agent-workflow acceptance](docs/agent-workflow-acceptance.md). Passing a tested editing route does not establish universal Hancom compatibility.
+
 ## Features
 
 - Open HWP/HWPX files in a browser or an embedded local browser panel.
