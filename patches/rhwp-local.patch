@@ -8855,7 +8855,7 @@ index c6de9bdb5..7ac621c72 100644
    },
    {
 diff --git a/rhwp-studio/src/engine/input-handler.ts b/rhwp-studio/src/engine/input-handler.ts
-index 043ee77ee..34f83e7b6 100644
+index 043ee77ee..be084458a 100644
 --- a/rhwp-studio/src/engine/input-handler.ts
 +++ b/rhwp-studio/src/engine/input-handler.ts
 @@ -19,6 +19,7 @@ import { VirtualScroll } from '@/view/virtual-scroll';
@@ -8877,7 +8877,30 @@ index 043ee77ee..34f83e7b6 100644
      startPageX: number;
      startPageY: number;
      lastPageX: number;
-@@ -2523,12 +2525,23 @@ export class InputHandler {
+@@ -2414,7 +2416,7 @@ export class InputHandler {
+    * 된다 — 여러 칸을 골라도 첫 칸만 바뀌는 증상.
+    *
+    * 셀 산출 축은 같은 블록을 대상으로 하는 applyCopiedCellPropsToSelection 과 같게 맞춘다
+-   * (getCellTableContext + getSelectedCellRange + getExcludedCells, 중첩 표 제외).
++   * (getCellTableContext + getSelectedCellRange + getExcludedCells).
+    */
+   private getSelectedCellBlock(): SelectedCellBlock | null {
+     if (!this.cursor.isInCellSelectionMode()) return null;
+@@ -2512,23 +2514,34 @@ export class InputHandler {
+ 
+   /** 셀 블록 안 모든 셀의 모든 문단을 문단 서식 대상으로 만든다 */
+   private getParaFormatTargetsForCellBlock(block: SelectedCellBlock): ParaFormatTarget[] {
+-    // 중첩 표 문단 서식은 목표 밖(getParaFormatTargetsForRange 도 동일 하계)이다.
+-    if (block.cellPath) return [];
+     return paraFormatTargetsForCellBlock(
+       block,
+-      (cellIdx) => this.wasm.getCellParagraphCount(block.sec, block.ppi, block.ci, cellIdx),
++      (cellIdx) => block.cellPath
++        ? this.wasm.getCellParagraphCountByPath(block.sec, block.ppi, JSON.stringify(withCellPathTarget(block.cellPath, cellIdx)))
++        : this.wasm.getCellParagraphCount(block.sec, block.ppi, block.ci, cellIdx),
+     );
+   }
+ 
    private getParaFormatTargetsForRange(start: DocumentPosition, end: DocumentPosition): ParaFormatTarget[] {
      if (this.cursor.isInHeaderFooter() || this.cursor.isInFootnote()) return [];
      if (start.isTextBox || end.isTextBox) return [];
@@ -12855,3 +12878,19 @@ index 4f8ee4cf7..2a79d5451 100644
      const color = hexToColorRef(this.colorInput.value);
      const baseline = parseInt(this.baselineInput.value, 10) || 0;
      const fontName = this.fontNameInput.value.trim();
+diff --git a/rhwp-studio/src/engine/cell-block-format.ts b/rhwp-studio/src/engine/cell-block-format.ts
+index 35d20dc3b..26a1ede19 100644
+--- a/rhwp-studio/src/engine/cell-block-format.ts
++++ b/rhwp-studio/src/engine/cell-block-format.ts
+@@ -85,9 +85,10 @@ export function paraFormatTargetsForCellBlock(
+         kind: 'cell',
+         sec: block.sec,
+         parentPara: block.ppi,
+-        controlIdx: block.ci,
++        controlIdx: block.cellPath?.at(-1)?.controlIndex ?? block.ci,
+         cellIdx,
+         cellParaIdx,
++        ...(block.cellPath ? { cellPath: withCellPathTarget(block.cellPath, cellIdx, cellParaIdx) } : {}),
+       });
+     }
+   }

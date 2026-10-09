@@ -27,6 +27,8 @@ The origin allowlist is request filtering, not a security sandbox. Keep normal C
 
 Install the `hwp-agent-edit` skill using `node scripts/install-skill.mjs`. The agent registers the user-authorized files with `scripts/open.mjs`, opens separate editor tabs, edits through the visible controls, explicitly saves and reopens each result, and returns the editable output files. The natural-language agent stays in Claude Code; the editor itself does not run a model.
 
+Keep personal skill discovery enabled. Claude's `--restricted` mode and `--setting-sources ''` exclude this installed personal skill; `--setting-sources user` discovers it. A bounded dry-run with only the `Skill` tool verified that a synthetic HWP/HWPX edit request, without naming the skill, selected and successfully loaded `hwp-agent-edit`. The run reached its cost limit immediately after loading, so it establishes routing only. It did not edit documents. See Claude's [skills](https://code.claude.com/docs/en/skills) and [CLI reference](https://code.claude.com/docs/en/cli-reference) for those settings.
+
 For a server that already exists, ask Claude to use `hwp-agent-edit`, open its `/tasks` URL and apply the specified edits. Keep that server and its manifest/process handle until the task finishes. A response that only links to an accessibility snapshot file is not the page contents; the agent should call `browser_snapshot` to read the current page directly.
 
 ## Exercised route
