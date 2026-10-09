@@ -11682,3 +11682,17 @@ index 77fa2c31f..c4623e935 100644
        return parseJson(this.#doc?.getTextFileUnicode?.() ?? '""', '');
      }
      // 이어 붙이기는 코어가 한다. 코어는 COM 실측대로 CP949 밖 글자를 `&#N;` 로 escape
+diff --git a/rhwp-studio/src/styles/dialogs.css b/rhwp-studio/src/styles/dialogs.css
+index fc08501c9..5489238c5 100644
+--- a/rhwp-studio/src/styles/dialogs.css
++++ b/rhwp-studio/src/styles/dialogs.css
+@@ -516,6 +516,9 @@
+ .context-menu {
+   position: fixed;
+   min-width: 200px;
++  box-sizing: border-box;
++  max-height: calc(100vh - 4px);
++  overflow-y: auto;
+   background: var(--color-surface);
+   border: 1px solid var(--ui-border);
+   box-shadow: var(--shadow-dropdown);

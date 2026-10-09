@@ -229,3 +229,14 @@ The local text panel and save/reopen fingerprint opt in through `GetTextFile('UN
 Actual hidden Codex browser use opened the previous HWP/HWPX results as new inputs, inspected their captions, edited each caption, saved, reloaded, reselected, edited again and saved revision 2. Disk-result reopening and independent parsing confirm exact captions, caption-bearing fingerprints, numbering, inner styles, all ancestor properties, enclosing host containment/non-overlap, source/output hashes and zero reported export loss. Both tab warning/error logs are empty. No native Hancom window was opened.
 
 This actual session also exposed a UI boundary: opening the text panel reduces the iframe height, and its tall cell context menu can extend below the visible area. Collapsing the text panel makes the caption command reachable. The menu height issue, caption search/formatting/multiline routes, special-object editing and exact-source native fidelity remain open. The full goal remains active.
+
+
+## Context menus in short editor panels
+
+Verified on 2026-10-10 with source version `1f7024f2d0fc5ed77e753e2d6758ecf1014e0915e40d8f6887c6cb5905a5206a`. The caption suite passes 35 checks, and the ten existing suites pass their 197 checks, 232 in total. Browser errors, external requests and reported warnings are empty.
+
+The red reproducer opened the text panel at a 720-pixel page height. Its 619-pixel cell context menu exceeded the 376-pixel iframe, making lower commands unreachable. The shared menu now uses border-box sizing, a viewport height limit and vertical scrolling before its existing placement measurement. Tests keep the panel open, assert containment and scrolling, execute the caption command and verify the correct innermost saved caption. No source dimensions or caption properties were changed to make the UI test pass. A first post-fix assertion read already-visible, stale panel content; it now waits for the requested asynchronous text read to complete.
+
+Actual hidden Codex browser use exercised both formats at 1230 by 720 pixels. The menu fit inside the iframe and its lower caption command became reachable by scrolling. Both captions were edited and saved as revision 3 with the text panel open. Disk-result reopening and independent parsing verify exact captions, auto-number controls, source hashes, receipt fingerprints, inner styles, ancestor properties, outside labels and enclosing host containment/non-overlap. Both tab warning/error logs are empty. The foreground and private document server were preserved, and native Hancom was not opened.
+
+Caption search and replacement, caption formatting and multiline/side placement, special-object editing, live Claude execution and exact-source native Hancom fidelity remain separate acceptance gates. The full goal remains active.
