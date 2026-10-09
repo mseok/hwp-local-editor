@@ -166,6 +166,30 @@ try{
         pass(entry.format+' three-level merged-table row/column operations match flat reference after export with path-aware events');
       }finally{reopened.free();flatReopened.free();}
     }finally{nestedMerged.free();flatMerged.free();}
+    const divided=new HwpDocument(mergedBytes),flatDivided=new HwpDocument(flatMergedBytes);
+    try{
+      const outerBefore=divided.getTableProperties(0,1,0),middleBefore=divided.getTablePropertiesByPath(0,1,middlePath);
+      const before=Buffer.from(entry.format==='hwp'?divided.exportHwp():divided.exportHwpx());
+      assert.throws(()=>divided.splitTableCellIntoByPath(0,1,mergedJson,0,0,1,65535,false,true));
+      assert.throws(()=>divided.splitTableCellIntoByPath(0,1,mergedJson,0,0,1,65536,false,true));
+      assert.throws(()=>divided.mergeTableCellsByPath(0,1,mergedJson,0,0,0,0));
+      assert.throws(()=>divided.splitTableCellsInRangeByPath(0,1,mergedJson,0,0,3,3,1,2,false));
+      assert.throws(()=>divided.splitTableCellByPath(0,1,'[]',0,0));
+      assert.deepEqual(Buffer.from(entry.format==='hwp'?divided.exportHwp():divided.exportHwpx()),before);
+      pass(entry.format+' rejected inner splits preserve bytes even when merge-first would mutate before overflow');
+      const operations=[['splitTableCell',0,0],['mergeTableCells',0,0,1,1],['splitTableCellInto',0,0,2,2,false,false],['mergeTableCells',0,0,1,1],['splitTableCellInto',0,0,2,3,true,true],['splitTableCellsInRange',0,0,1,1,2,2,false]];
+      for(const [method,...args] of operations){divided[method+'ByPath'](0,1,mergedJson,...args);flatDivided[method](0,0,mergedControl,...args);}
+      const reopened=new HwpDocument(entry.format==='hwp'?divided.exportHwp():divided.exportHwpx()),reference=new HwpDocument(entry.format==='hwp'?flatDivided.exportHwp():flatDivided.exportHwpx());
+      try{
+        assert.equal(reopened.getTableProperties(0,1,0),outerBefore);assert.equal(reopened.getTablePropertiesByPath(0,1,middlePath),middleBefore);
+        const dims=JSON.parse(reopened.getTableDimensionsByPath(0,1,mergedJson));assert.deepEqual(dims,JSON.parse(reference.getTableDimensions(0,0,mergedControl)));
+        assert.equal(reopened.getTablePropertiesByPath(0,1,mergedJson),reference.getTableProperties(0,0,mergedControl));
+        for(let cell=0;cell<dims.cellCount;cell++)assert.equal(reopened.getCellPropertiesByPath(0,1,mergedJson,cell),reference.getCellProperties(0,0,mergedControl,cell));
+        assert.deepEqual(JSON.parse(reopened.getTextFileUnicode()).match(/병합 자료\d+/g).sort(),JSON.parse(reference.getTextFileUnicode()).match(/병합 자료\d+/g).sort());
+        const events=JSON.parse(divided.getEventLog()).events.filter(e=>e.type==='TableStructureChangedByPath');assert.equal(events.length,operations.length);for(const event of events)assert.deepEqual(event.cellPath,mergedPath);
+        pass(entry.format+' three-level split, merge and range split match flat reference through export');
+      }finally{reopened.free();reference.free();}
+    }finally{divided.free();flatDivided.free();}
     const page=await context.newPage();await page.goto(base+'/editor?id='+entry.id);await ready(page);
     const frame=page.frameLocator('#editor iframe');
     await select(page,'중첩 수정 대상');
@@ -289,6 +313,40 @@ try{
       assert.equal(digest(await readFile(entry.source)),entry.sourceSha256);
       pass(entry.format+' inner row/column deletion clamps the cursor; undo/recovery preserves ancestor text');
     }finally{original.free();result.free();}
+    await page.goto(base+'/editor?id='+entry.id+'&result=1');await ready(page);await select(page,'중첩 셀 보존');
+    await frame.locator('#menu-bar').getByText('표',{exact:true}).click();
+    await frame.getByText('셀 나누기',{exact:true}).click();
+    await frame.getByRole('spinbutton',{name:'나눌 칸 수',exact:true}).fill('2');
+    await frame.getByRole('button',{name:'나누기(D)',exact:true}).click();await save(page,7);
+    result=new HwpDocument(await readFile(entry.output));
+    try{
+      assert.deepEqual(JSON.parse(result.getTableDimensions(0,1,0)),{rowCount:2,colCount:2,cellCount:4},'Nested cell splitting must not split the outer table');
+      assert.deepEqual(JSON.parse(result.getTableDimensionsByPath(0,1,targetPath)),{rowCount:2,colCount:3,cellCount:5});
+      const labels=JSON.parse(result.getTextFileUnicode());for(const label of ['바깥 셀 A','바깥 셀 B','바깥 셀 C','바깥 셀 D','중첩 셀 보존'])assert.ok(labels.includes(label));
+      pass(entry.format+' inner cell splitting preserves outer table scope');
+    }finally{result.free();}
+    await page.goto(base+'/editor?id='+entry.id+'&result=1');await ready(page);await select(page,'중첩 셀 보존');
+    const input=frame.getByRole('textbox',{name:'문서 편집 입력',exact:true});
+    await input.press('F5');await input.press('F5');await input.press('ArrowRight');
+    await frame.locator('#menu-bar').getByText('표',{exact:true}).click();await frame.getByText('셀 합치기',{exact:true}).click();await save(page,8);
+    result=new HwpDocument(await readFile(entry.output));
+    try{
+      assert.deepEqual(JSON.parse(result.getTableDimensions(0,1,0)),{rowCount:2,colCount:2,cellCount:4});
+      assert.deepEqual(JSON.parse(result.getTableDimensionsByPath(0,1,targetPath)),{rowCount:2,colCount:3,cellCount:4});
+      const selected=JSON.parse(targetPath);selected.at(-1).cellIndex=2;
+      assert.deepEqual(JSON.parse(result.getCellInfoByPath(0,1,JSON.stringify(selected))),{row:1,col:0,rowSpan:1,colSpan:2});
+    }finally{result.free();}
+    const beforeMergeUndo=await page.locator('#status').getAttribute('data-change-revision');
+    await frame.locator('#menu-bar').getByText('편집',{exact:true}).click();await frame.getByText('되돌리기',{exact:true}).click();
+    await page.waitForFunction(previous=>{const d=document.querySelector('#status').dataset;return Number(d.changeRevision)>Number(previous)&&d.changeRevision===d.savedRevision;},beforeMergeUndo);
+    await page.reload();await ready(page);await save(page,9);
+    result=new HwpDocument(await readFile(entry.output));
+    try{
+      assert.deepEqual(JSON.parse(result.getTableDimensions(0,1,0)),{rowCount:2,colCount:2,cellCount:4});
+      assert.deepEqual(JSON.parse(result.getTableDimensionsByPath(0,1,targetPath)),{rowCount:2,colCount:3,cellCount:5});
+      assert.equal(digest(await readFile(entry.source)),entry.sourceSha256);
+      pass(entry.format+' inner merge and undo survive journal recovery without changing the outer table');
+    }finally{result.free();}
     await page.close();
   }
   assert.deepEqual(report.errors,[]);assert.deepEqual(report.warnings,[]);assert.deepEqual(report.externalRequests,[]);pass('no browser errors, warnings or external requests');

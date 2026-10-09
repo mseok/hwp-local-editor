@@ -1,5 +1,5 @@
 diff --git a/rhwp-studio/src/core/wasm-bridge.ts b/rhwp-studio/src/core/wasm-bridge.ts
-index 58162bab6..c6b36c711 100644
+index 58162bab6..5afa32e16 100644
 --- a/rhwp-studio/src/core/wasm-bridge.ts
 +++ b/rhwp-studio/src/core/wasm-bridge.ts
 @@ -10,6 +10,7 @@ import type { HyperlinkTarget, HyperlinkContext } from './hyperlink';
@@ -128,7 +128,34 @@ index 58162bab6..c6b36c711 100644
    getTableSignature(sec: number, parentPara: number, controlIdx: number): string {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      const d = this.doc as unknown as { getTableSignature?: (a: number, b: number, c: number) => string };
-@@ -2182,6 +2237,26 @@ export class WasmBridge {
+@@ -2078,6 +2133,26 @@ export class WasmBridge {
+     return JSON.parse(this.doc.setTableProperties(sec, parentPara, controlIdx, JSON.stringify(props)));
+   }
+ 
++  mergeTableCellsByPath(sec: number, parentPara: number, cellPathJson: string, startRow: number, startCol: number, endRow: number, endCol: number): { ok: boolean; cellCount: number } {
++    if (!this.doc) throw new Error('No document loaded');
++    return JSON.parse((this.doc as any).mergeTableCellsByPath(sec, parentPara, cellPathJson, startRow, startCol, endRow, endCol));
++  }
++
++  splitTableCellByPath(sec: number, parentPara: number, cellPathJson: string, row: number, col: number): { ok: boolean; cellCount: number } {
++    if (!this.doc) throw new Error('No document loaded');
++    return JSON.parse((this.doc as any).splitTableCellByPath(sec, parentPara, cellPathJson, row, col));
++  }
++
++  splitTableCellIntoByPath(sec: number, parentPara: number, cellPathJson: string, row: number, col: number, nRows: number, mCols: number, equalRowHeight: boolean, mergeFirst: boolean): { ok: boolean; cellCount: number } {
++    if (!this.doc) throw new Error('No document loaded');
++    return JSON.parse((this.doc as any).splitTableCellIntoByPath(sec, parentPara, cellPathJson, row, col, nRows, mCols, equalRowHeight, mergeFirst));
++  }
++
++  splitTableCellsInRangeByPath(sec: number, parentPara: number, cellPathJson: string, startRow: number, startCol: number, endRow: number, endCol: number, nRows: number, mCols: number, equalRowHeight: boolean): { ok: boolean; cellCount: number } {
++    if (!this.doc) throw new Error('No document loaded');
++    return JSON.parse((this.doc as any).splitTableCellsInRangeByPath(sec, parentPara, cellPathJson, startRow, startCol, endRow, endCol, nRows, mCols, equalRowHeight));
++  }
++
+   mergeTableCells(sec: number, parentPara: number, controlIdx: number, startRow: number, startCol: number, endRow: number, endCol: number): { ok: boolean; cellCount: number } {
+     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
+     return JSON.parse(this.doc.mergeTableCells(sec, parentPara, controlIdx, startRow, startCol, endRow, endCol));
+@@ -2182,6 +2257,26 @@ export class WasmBridge {
      return JSON.parse(this.doc.mergeTableWithNext(sec, parentPara, controlIdx));
    }
  
@@ -155,7 +182,7 @@ index 58162bab6..c6b36c711 100644
    insertTableRow(sec: number, parentPara: number, controlIdx: number, rowIdx: number, below: boolean): { ok: boolean; rowCount: number; colCount: number } {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      return JSON.parse(this.doc.insertTableRow(sec, parentPara, controlIdx, rowIdx, below));
-@@ -3782,9 +3857,9 @@ export class WasmBridge {
+@@ -3782,9 +3877,9 @@ export class WasmBridge {
     * cellContext 가 실리므로 호출자는 셀 좌표로 커서를 옮길 수 있어야 한다.
     * 기본값은 종전대로 본문만 — 셀 이동을 못 하는 호출자가 무회귀로 남는다.
     */
@@ -6860,7 +6887,7 @@ index 2f0b5ae..0fb0243 100644
          w,
          "hh:breakSetting",
 diff --git a/src/wasm_api.rs b/src/wasm_api.rs
-index 2031085e3..4c259bf52 100644
+index 2031085e3..2165d6e91 100644
 --- a/src/wasm_api.rs
 +++ b/src/wasm_api.rs
 @@ -189,6 +189,11 @@ fn render_page_to_canvas_filtered_with_profile_impl(
@@ -7069,7 +7096,97 @@ index 2031085e3..4c259bf52 100644
      #[wasm_bindgen(js_name = deleteTableColumn)]
      pub fn delete_table_column(
          &mut self,
-@@ -3382,6 +3511,21 @@ impl HwpDocument {
+@@ -2192,6 +2321,89 @@ impl HwpDocument {
+         .map_err(|e| e.into())
+     }
+ 
++    #[wasm_bindgen(js_name = mergeTableCellsByPath)]
++    pub fn merge_table_cells_by_path(
++        &mut self,
++        section_idx: u32,
++        parent_para_idx: u32,
++        cell_path_json: &str,
++        start_row: u32,
++        start_col: u32,
++        end_row: u32,
++        end_col: u32,
++    ) -> Result<String, JsValue> {
++        let path = parse_cell_path_arg(cell_path_json)?;
++        let start_row = u16::try_from(start_row).map_err(|_| JsValue::from_str("셀 좌표 또는 분할 수가 허용 범위를 넘습니다"))?;
++        let start_col = u16::try_from(start_col).map_err(|_| JsValue::from_str("셀 좌표 또는 분할 수가 허용 범위를 넘습니다"))?;
++        let end_row = u16::try_from(end_row).map_err(|_| JsValue::from_str("셀 좌표 또는 분할 수가 허용 범위를 넘습니다"))?;
++        let end_col = u16::try_from(end_col).map_err(|_| JsValue::from_str("셀 좌표 또는 분할 수가 허용 범위를 넘습니다"))?;
++        self.merge_table_cells_by_cell_path_native(section_idx as usize, parent_para_idx as usize, &path, start_row, start_col, end_row, end_col)
++            .map_err(|e| e.into())
++    }
++
++    #[wasm_bindgen(js_name = splitTableCellByPath)]
++    pub fn split_table_cell_by_path(
++        &mut self,
++        section_idx: u32,
++        parent_para_idx: u32,
++        cell_path_json: &str,
++        row: u32,
++        col: u32,
++    ) -> Result<String, JsValue> {
++        let path = parse_cell_path_arg(cell_path_json)?;
++        let row = u16::try_from(row).map_err(|_| JsValue::from_str("셀 좌표 또는 분할 수가 허용 범위를 넘습니다"))?;
++        let col = u16::try_from(col).map_err(|_| JsValue::from_str("셀 좌표 또는 분할 수가 허용 범위를 넘습니다"))?;
++        self.split_table_cell_by_cell_path_native(section_idx as usize, parent_para_idx as usize, &path, row, col)
++            .map_err(|e| e.into())
++    }
++
++    #[wasm_bindgen(js_name = splitTableCellIntoByPath)]
++    pub fn split_table_cell_into_by_path(
++        &mut self,
++        section_idx: u32,
++        parent_para_idx: u32,
++        cell_path_json: &str,
++        row: u32,
++        col: u32,
++        n_rows: u32,
++        m_cols: u32,
++        equal_row_height: bool,
++        merge_first: bool,
++    ) -> Result<String, JsValue> {
++        let path = parse_cell_path_arg(cell_path_json)?;
++        let row = u16::try_from(row).map_err(|_| JsValue::from_str("셀 좌표 또는 분할 수가 허용 범위를 넘습니다"))?;
++        let col = u16::try_from(col).map_err(|_| JsValue::from_str("셀 좌표 또는 분할 수가 허용 범위를 넘습니다"))?;
++        let n_rows = u16::try_from(n_rows).map_err(|_| JsValue::from_str("셀 좌표 또는 분할 수가 허용 범위를 넘습니다"))?;
++        let m_cols = u16::try_from(m_cols).map_err(|_| JsValue::from_str("셀 좌표 또는 분할 수가 허용 범위를 넘습니다"))?;
++        self.split_table_cell_into_by_cell_path_native(section_idx as usize, parent_para_idx as usize, &path, row, col, n_rows, m_cols, equal_row_height, merge_first)
++            .map_err(|e| e.into())
++    }
++
++    #[wasm_bindgen(js_name = splitTableCellsInRangeByPath)]
++    pub fn split_table_cells_in_range_by_path(
++        &mut self,
++        section_idx: u32,
++        parent_para_idx: u32,
++        cell_path_json: &str,
++        start_row: u32,
++        start_col: u32,
++        end_row: u32,
++        end_col: u32,
++        n_rows: u32,
++        m_cols: u32,
++        equal_row_height: bool,
++    ) -> Result<String, JsValue> {
++        let path = parse_cell_path_arg(cell_path_json)?;
++        let start_row = u16::try_from(start_row).map_err(|_| JsValue::from_str("셀 좌표 또는 분할 수가 허용 범위를 넘습니다"))?;
++        let start_col = u16::try_from(start_col).map_err(|_| JsValue::from_str("셀 좌표 또는 분할 수가 허용 범위를 넘습니다"))?;
++        let end_row = u16::try_from(end_row).map_err(|_| JsValue::from_str("셀 좌표 또는 분할 수가 허용 범위를 넘습니다"))?;
++        let end_col = u16::try_from(end_col).map_err(|_| JsValue::from_str("셀 좌표 또는 분할 수가 허용 범위를 넘습니다"))?;
++        let n_rows = u16::try_from(n_rows).map_err(|_| JsValue::from_str("셀 좌표 또는 분할 수가 허용 범위를 넘습니다"))?;
++        let m_cols = u16::try_from(m_cols).map_err(|_| JsValue::from_str("셀 좌표 또는 분할 수가 허용 범위를 넘습니다"))?;
++        self.split_table_cells_in_range_by_cell_path_native(section_idx as usize, parent_para_idx as usize, &path, start_row, start_col, end_row, end_col, n_rows, m_cols, equal_row_height)
++            .map_err(|e| e.into())
++    }
++
+     /// 표의 셀을 병합한다.
+     ///
+     /// 반환값: JSON `{"ok":true,"cellCount":<N>}`
+@@ -3382,6 +3594,21 @@ impl HwpDocument {
      /// 반환: JSON `{"ok":true,"changes":[{cellIdx,beforeId,afterId}...],
      /// "borderFillLenBefore":N,"docInfoDirtyBefore":bool}` — changes 는 [#5959]
      /// borderFillId 전환 기록(target+이웃)이다.
@@ -7091,7 +7208,7 @@ index 2031085e3..4c259bf52 100644
      #[wasm_bindgen(js_name = setCellProperties)]
      pub fn set_cell_properties(
          &mut self,
-@@ -3533,6 +3677,19 @@ impl HwpDocument {
+@@ -3533,6 +3760,19 @@ impl HwpDocument {
      /// 표 속성을 조회한다.
      ///
      /// 반환: JSON `{cellSpacing, paddingLeft, paddingRight, paddingTop, paddingBottom, pageBreak, repeatHeader}`
@@ -7111,7 +7228,7 @@ index 2031085e3..4c259bf52 100644
      #[wasm_bindgen(js_name = getTableProperties)]
      pub fn get_table_properties(
          &self,
-@@ -3551,6 +3708,20 @@ impl HwpDocument {
+@@ -3551,6 +3791,20 @@ impl HwpDocument {
      /// 표 속성을 수정한다.
      ///
      /// 반환: JSON `{"ok":true}`
@@ -7132,7 +7249,7 @@ index 2031085e3..4c259bf52 100644
      #[wasm_bindgen(js_name = setTableProperties)]
      pub fn set_table_properties(
          &mut self,
-@@ -5498,9 +5669,11 @@ impl HwpDocument {
+@@ -5498,9 +5752,11 @@ impl HwpDocument {
          forward: bool,
          case_sensitive: bool,
          include_cells: Option<bool>,
@@ -7145,7 +7262,7 @@ index 2031085e3..4c259bf52 100644
                  query,
                  from_sec as usize,
                  from_para as usize,
-@@ -5509,6 +5682,7 @@ impl HwpDocument {
+@@ -5509,6 +5765,7 @@ impl HwpDocument {
                  case_sensitive,
                  // [#3865] 미지정이면 종전 동작(본문만) — 인자를 6개만 넘기던 기존 호출자 무회귀.
                  include_cells.unwrap_or(false),
@@ -7315,7 +7432,7 @@ index dffc08cd0..7e8bd19b5 100644
      this.countInput.min = '1';
      this.countInput.max = String(MAX_INSERT_COUNT);
 diff --git a/rhwp-studio/src/command/commands/table.ts b/rhwp-studio/src/command/commands/table.ts
-index c6de9bdb5..c753233ae 100644
+index c6de9bdb5..5b055b987 100644
 --- a/rhwp-studio/src/command/commands/table.ts
 +++ b/rhwp-studio/src/command/commands/table.ts
 @@ -1,4 +1,5 @@
@@ -7633,6 +7750,107 @@ index c6de9bdb5..c753233ae 100644
 -        },
 -      }), '칸 지우기');
 +      applyTableDeleteRowColumn(services, 'col');
+     },
+   },
+   {
+@@ -596,18 +506,26 @@ export const tableCommands: CommandDef[] = [
+     shortcutLabel: 'S',
+     canExecute: inTable,
+     execute(services) {
+-      const ih = services.getInputHandler();
+-      if (!ih) return;
+-      const pos = ih.getCursorPosition();
+-      if (pos.parentParaIndex === undefined || pos.controlIndex === undefined || pos.cellIndex === undefined) return;
++      const context = currentTableCellContext(services);
++      if (!context) return;
++      const { ih, pos, cellInfo, path } = context;
++      if (hasNonRectangularCellSelection(ih)) return;
+ 
+       // F5 셀 선택 모드: 범위 선택 여부 확인
+       const range = ih.getSelectedCellRange?.();
+       const tableCtx = ih.getCellTableContext?.();
+-      const isMultiCell = range && tableCtx &&
+-        (range.startRow !== range.endRow || range.startCol !== range.endCol);
++      let selectedCellCount = 0;
++      if (range && tableCtx) {
++        const dims = services.wasm.getTableDimensionsByPath(tableCtx.sec, tableCtx.ppi, JSON.stringify(path));
++        const selectedPath = path.map(entry => ({ ...entry }));
++        for (let cellIndex = 0; cellIndex < dims.cellCount; cellIndex += 1) {
++          selectedPath[selectedPath.length - 1].cellIndex = cellIndex;
++          const info = services.wasm.getCellInfoByPath(tableCtx.sec, tableCtx.ppi, JSON.stringify(selectedPath));
++          if (isCellInRange(info, range)) selectedCellCount += 1;
++        }
++      }
++      const isMultiCell = selectedCellCount > 1;
+ 
+-      const cellInfo = services.wasm.getCellInfo(pos.sectionIndex, pos.parentParaIndex, pos.controlIndex, pos.cellIndex);
+       const isMerged = !isMultiCell && (cellInfo.rowSpan > 1 || cellInfo.colSpan > 1);
+ 
+       const dialog = new CellSplitDialog(isMerged);
+@@ -618,25 +536,30 @@ export const tableCommands: CommandDef[] = [
+           kind: 'snapshot',
+           operationType: 'splitTableCell',
+           operation: (wasm) => {
++            ih2.clearTextSelection();
++            let result;
+             if (isMultiCell && range && tableCtx) {
+-              wasm.splitTableCellsInRange(
+-                tableCtx.sec, tableCtx.ppi, tableCtx.ci,
++              result = wasm.splitTableCellsInRangeByPath(
++                tableCtx.sec, tableCtx.ppi, JSON.stringify(path),
+                 range.startRow, range.startCol, range.endRow, range.endCol,
+                 nRows, mCols, equalHeight,
+               );
+             } else {
+-              wasm.splitTableCellInto(
+-                pos.sectionIndex, pos.parentParaIndex!, pos.controlIndex!,
++              result = wasm.splitTableCellIntoByPath(
++                pos.sectionIndex, pos.parentParaIndex!, JSON.stringify(path),
+                 cellInfo.row, cellInfo.col,
+                 nRows, mCols, equalHeight, mergeFirst,
+               );
+             }
+-            return pos;
++            if (!result.ok) throw new Error('표의 셀을 나눌 수 없습니다.');
++            return positionAfterTableEdit(wasm, pos, path,
++              isMultiCell ? range!.startRow : cellInfo.row,
++              isMultiCell ? range!.startCol : cellInfo.col);
+           },
+         }), '셀 나누기');
+         if (isMultiCell) ih2.exitCellSelectionMode?.();
+         // 대화상자 닫힘 후 편집 포커스 복원 (#1140 — 표 만들기와 동일 결함)
+-        (ih2 as any).textarea?.focus();
++        restoreEditorFocus(ih2);
+       };
+       dialog.show();
+     },
+@@ -647,8 +570,10 @@ export const tableCommands: CommandDef[] = [
+     shortcutLabel: 'M',
+     canExecute: (ctx) => ctx.inCellSelectionMode,
+     execute(services) {
+-      const ih = services.getInputHandler();
+-      if (!ih) return;
++      const context = currentTableCellContext(services);
++      if (!context) return;
++      const { ih, pos, path } = context;
++      if (hasNonRectangularCellSelection(ih)) return;
+       const range = ih.getSelectedCellRange();
+       const tableCtx = ih.getCellTableContext();
+       if (!range || !tableCtx) return;
+@@ -657,11 +582,14 @@ export const tableCommands: CommandDef[] = [
+         kind: 'snapshot',
+         operationType: 'mergeTableCells',
+         operation: (wasm) => {
+-          wasm.mergeTableCells(tableCtx.sec, tableCtx.ppi, tableCtx.ci, range.startRow, range.startCol, range.endRow, range.endCol);
+-          return ih.getCursorPosition();
++          ih.clearTextSelection();
++          const result = wasm.mergeTableCellsByPath(tableCtx.sec, tableCtx.ppi, JSON.stringify(path), range.startRow, range.startCol, range.endRow, range.endCol);
++          if (!result.ok) throw new Error('표의 셀을 합칠 수 없습니다.');
++          return positionAfterTableEdit(wasm, pos, path, range.startRow, range.startCol);
+         },
+       }), '셀 합치기');
+       ih.exitCellSelectionMode();
++      restoreEditorFocus(ih);
      },
    },
    {
@@ -8022,7 +8240,7 @@ index 609d0525d..2fff61ba4 100644
          // 이동 규칙도 대화상자와 공유한다(셀 매치는 셀 좌표로 간다).
          navigateToSearchHit(ih, result);
 diff --git a/src/document_core/commands/table_ops.rs b/src/document_core/commands/table_ops.rs
-index 7c31daa4c..e20fa5ffe 100644
+index 7c31daa4c..b62b6a28d 100644
 --- a/src/document_core/commands/table_ops.rs
 +++ b/src/document_core/commands/table_ops.rs
 @@ -78,22 +78,45 @@ impl DocumentCore {
@@ -8313,7 +8531,153 @@ index 7c31daa4c..e20fa5ffe 100644
      /// 표를 지정 행에서 두 개로 나눈다 (한컴 [표-표 나누기], table(dividing).htm).
      ///
      /// `at_row` 행부터 새 표가 시작된다. 첫 행(0)에서는 한컴과 동일하게 거부한다.
-@@ -1269,6 +1419,19 @@ impl DocumentCore {
+@@ -578,6 +728,145 @@ impl DocumentCore {
+         )))
+     }
+ 
++    pub fn merge_table_cells_by_cell_path_native(
++        &mut self,
++        section_idx: usize,
++        parent_para_idx: usize,
++        path: &[(usize, usize, usize)],
++        start_row: u16,
++        start_col: u16,
++        end_row: u16,
++        end_col: u16,
++    ) -> Result<String, HwpError> {
++        if path.len() == 1 {
++            return self.merge_table_cells_native(section_idx, parent_para_idx, path[0].0, start_row, start_col, end_row, end_col);
++        }
++        let mut table = self.resolve_table_by_path(section_idx, parent_para_idx, path)?.clone();
++        table.merge_cells(start_row, start_col, end_row, end_col).map_err(HwpError::RenderError)?;
++        let cell_count = table.cells.len();
++        *self.resolve_table_mut_by_cell_path(section_idx, parent_para_idx, path)? = table;
++        self.finish_nested_cell_structure_edit(section_idx, parent_para_idx, path)?;
++        self.event_log.push(DocumentEvent::TableStructureChangedByPath {
++            section: section_idx,
++            para: parent_para_idx,
++            cell_path: path.to_vec(),
++            operation: "mergeCells",
++        });
++        Ok(super::super::helpers::json_ok_with(&format!("\"cellCount\":{}", cell_count)))
++    }
++
++    pub fn split_table_cell_by_cell_path_native(
++        &mut self,
++        section_idx: usize,
++        parent_para_idx: usize,
++        path: &[(usize, usize, usize)],
++        row: u16,
++        col: u16,
++    ) -> Result<String, HwpError> {
++        if path.len() == 1 {
++            return self.split_table_cell_native(section_idx, parent_para_idx, path[0].0, row, col);
++        }
++        let mut table = self.resolve_table_by_path(section_idx, parent_para_idx, path)?.clone();
++        table.split_cell(row, col).map_err(HwpError::RenderError)?;
++        let cell_count = table.cells.len();
++        *self.resolve_table_mut_by_cell_path(section_idx, parent_para_idx, path)? = table;
++        self.finish_nested_cell_structure_edit(section_idx, parent_para_idx, path)?;
++        self.event_log.push(DocumentEvent::TableStructureChangedByPath {
++            section: section_idx,
++            para: parent_para_idx,
++            cell_path: path.to_vec(),
++            operation: "splitCell",
++        });
++        Ok(super::super::helpers::json_ok_with(&format!("\"cellCount\":{}", cell_count)))
++    }
++
++    pub fn split_table_cell_into_by_cell_path_native(
++        &mut self,
++        section_idx: usize,
++        parent_para_idx: usize,
++        path: &[(usize, usize, usize)],
++        row: u16,
++        col: u16,
++        n_rows: u16,
++        m_cols: u16,
++        equal_row_height: bool,
++        merge_first: bool,
++    ) -> Result<String, HwpError> {
++        if path.len() == 1 {
++            return self.split_table_cell_into_native(section_idx, parent_para_idx, path[0].0, row, col, n_rows, m_cols, equal_row_height, merge_first);
++        }
++        let mut table = self.resolve_table_by_path(section_idx, parent_para_idx, path)?.clone();
++        table.split_cell_into(row, col, n_rows, m_cols, equal_row_height, merge_first).map_err(HwpError::RenderError)?;
++        let cell_count = table.cells.len();
++        *self.resolve_table_mut_by_cell_path(section_idx, parent_para_idx, path)? = table;
++        self.finish_nested_cell_structure_edit(section_idx, parent_para_idx, path)?;
++        self.event_log.push(DocumentEvent::TableStructureChangedByPath {
++            section: section_idx,
++            para: parent_para_idx,
++            cell_path: path.to_vec(),
++            operation: "splitCellInto",
++        });
++        Ok(super::super::helpers::json_ok_with(&format!("\"cellCount\":{}", cell_count)))
++    }
++
++    pub fn split_table_cells_in_range_by_cell_path_native(
++        &mut self,
++        section_idx: usize,
++        parent_para_idx: usize,
++        path: &[(usize, usize, usize)],
++        start_row: u16,
++        start_col: u16,
++        end_row: u16,
++        end_col: u16,
++        n_rows: u16,
++        m_cols: u16,
++        equal_row_height: bool,
++    ) -> Result<String, HwpError> {
++        if path.len() == 1 {
++            return self.split_table_cells_in_range_native(section_idx, parent_para_idx, path[0].0, start_row, start_col, end_row, end_col, n_rows, m_cols, equal_row_height);
++        }
++        // Commit only after every cell split succeeds.
++        let mut table = self.resolve_table_by_path(section_idx, parent_para_idx, path)?.clone();
++        if start_row > end_row || start_col > end_col
++            || end_row >= table.row_count || end_col >= table.col_count
++        {
++            return Err(HwpError::RenderError("분할 범위가 표 크기를 벗어납니다".to_string()));
++        }
++        table.split_cells_in_range(start_row, start_col, end_row, end_col, n_rows, m_cols, equal_row_height).map_err(HwpError::RenderError)?;
++        let cell_count = table.cells.len();
++        *self.resolve_table_mut_by_cell_path(section_idx, parent_para_idx, path)? = table;
++        self.finish_nested_cell_structure_edit(section_idx, parent_para_idx, path)?;
++        self.event_log.push(DocumentEvent::TableStructureChangedByPath {
++            section: section_idx,
++            para: parent_para_idx,
++            cell_path: path.to_vec(),
++            operation: "splitCellsInRange",
++        });
++        Ok(super::super::helpers::json_ok_with(&format!("\"cellCount\":{}", cell_count)))
++    }
++
++    fn finish_nested_cell_structure_edit(
++        &mut self,
++        section_idx: usize,
++        parent_para_idx: usize,
++        path: &[(usize, usize, usize)],
++    ) -> Result<(), HwpError> {
++        let counts: Vec<usize> = self.resolve_table_by_path(section_idx, parent_para_idx, path)?
++            .cells.iter().map(|cell| cell.paragraphs.len()).collect();
++        let mut cell_path = path.to_vec();
++        for (cell_idx, count) in counts.into_iter().enumerate() {
++            for cell_para_idx in 0..count {
++                let last = cell_path.last_mut().unwrap();
++                last.1 = cell_idx;
++                last.2 = cell_para_idx;
++                self.reflow_cell_paragraph_by_path(section_idx, parent_para_idx, &cell_path, cell_para_idx);
++            }
++            cell_path.last_mut().unwrap().2 = 0;
++            self.recalculate_cell_paragraph_vpos_by_path(section_idx, parent_para_idx, &cell_path, 0, None);
++        }
++        self.finish_table_structure_edit_by_path(section_idx, parent_para_idx, path, false)
++    }
++
+     /// 표 셀을 병합한다 (네이티브).
+     pub fn merge_table_cells_native(
+         &mut self,
+@@ -1269,6 +1558,19 @@ impl DocumentCore {
          control_idx: usize,
          cell_idx: usize,
          json: &str,
@@ -8333,7 +8697,7 @@ index 7c31daa4c..e20fa5ffe 100644
      ) -> Result<String, HwpError> {
          let parsed: serde_json::Value =
              serde_json::from_str(json).unwrap_or(serde_json::Value::Null);
-@@ -1304,7 +1467,7 @@ impl DocumentCore {
+@@ -1304,7 +1606,7 @@ impl DocumentCore {
              Some(self.normalize_cell_border_fill_json_for_edit(
                  section_idx,
                  parent_para_idx,
@@ -8342,7 +8706,7 @@ index 7c31daa4c..e20fa5ffe 100644
                  cell_idx,
                  json,
              ))
-@@ -1327,7 +1490,7 @@ impl DocumentCore {
+@@ -1327,7 +1629,7 @@ impl DocumentCore {
              let mut needs_reflow = false;
              let mut size_changed = false;
              let mut width_changed = false;
@@ -8351,7 +8715,7 @@ index 7c31daa4c..e20fa5ffe 100644
              let original_width = table.common.width;
              let direct_border_fill_id = if has_border_fill_change {
                  None
-@@ -1422,12 +1585,14 @@ impl DocumentCore {
+@@ -1422,12 +1724,14 @@ impl DocumentCore {
          if needs_reflow {
              let para_count = reflow_para_count;
              for cell_para_idx in 0..para_count {
@@ -8372,7 +8736,7 @@ index 7c31daa4c..e20fa5ffe 100644
                  );
              }
          }
-@@ -1465,7 +1630,7 @@ impl DocumentCore {
+@@ -1465,7 +1769,7 @@ impl DocumentCore {
  
              // 대상 셀 정보 추출 + border_fill_id 변경
              let (target_row, target_col, target_col_span, target_row_span) = {
@@ -8381,7 +8745,7 @@ index 7c31daa4c..e20fa5ffe 100644
                  let (row, col, col_span, row_span) = {
                      let cell = table.cells.get_mut(cell_idx).ok_or_else(|| {
                          HwpError::RenderError(format!("셀 인덱스 {} 범위 초과", cell_idx))
-@@ -1510,10 +1675,10 @@ impl DocumentCore {
+@@ -1510,10 +1814,10 @@ impl DocumentCore {
  
              // 이웃 셀의 공유 엣지 테두리를 갱신
              // borders 배열: [좌(0), 우(1), 상(2), 하(3)]
@@ -8394,7 +8758,7 @@ index 7c31daa4c..e20fa5ffe 100644
                  cell_idx,
                  target_row,
                  target_col,
-@@ -1624,7 +1789,7 @@ impl DocumentCore {
+@@ -1624,7 +1928,7 @@ impl DocumentCore {
          &self,
          section_idx: usize,
          parent_para_idx: usize,
@@ -8403,7 +8767,7 @@ index 7c31daa4c..e20fa5ffe 100644
          cell_idx: usize,
          json: &str,
      ) -> String {
-@@ -1643,16 +1808,7 @@ impl DocumentCore {
+@@ -1643,16 +1947,7 @@ impl DocumentCore {
              return json.to_string();
          }
  
@@ -8421,7 +8785,7 @@ index 7c31daa4c..e20fa5ffe 100644
              return json.to_string();
          };
          let Some(cell) = table.cells.get(cell_idx) else {
-@@ -2055,6 +2211,7 @@ impl DocumentCore {
+@@ -2055,6 +2350,7 @@ impl DocumentCore {
      /// 변경이 반영되지 않을 수 있으므로, 이웃 셀의 대응 테두리도 함께 갱신한다.
      ///
      /// borders 배열: [좌(0), 우(1), 상(2), 하(3)]
@@ -8429,7 +8793,7 @@ index 7c31daa4c..e20fa5ffe 100644
      fn update_neighbor_borders(
          &mut self,
          section_idx: usize,
-@@ -2066,6 +2223,24 @@ impl DocumentCore {
+@@ -2066,6 +2362,24 @@ impl DocumentCore {
          target_col_span: usize,
          target_row_span: usize,
          new_borders: &[crate::model::style::BorderLine; 4],
@@ -8454,7 +8818,7 @@ index 7c31daa4c..e20fa5ffe 100644
      ) -> Vec<(usize, u16, u16)> {
          use crate::model::style::BorderLine;
  
-@@ -2076,7 +2251,7 @@ impl DocumentCore {
+@@ -2076,7 +2390,7 @@ impl DocumentCore {
          // 1단계: 이웃 셀 탐색 — (셀 인덱스, old_bf_id, 갱신할 방향, 새 테두리)
          let mut updates: Vec<(usize, u16, usize, BorderLine)> = Vec::new();
          {
@@ -8463,7 +8827,7 @@ index 7c31daa4c..e20fa5ffe 100644
                  Ok(t) => t,
                  Err(_) => return neighbor_changes,
              };
-@@ -2168,7 +2343,7 @@ impl DocumentCore {
+@@ -2168,7 +2482,7 @@ impl DocumentCore {
                  }
              };
  
@@ -8472,7 +8836,7 @@ index 7c31daa4c..e20fa5ffe 100644
                  Ok(t) => t,
                  Err(_) => return neighbor_changes,
              };
-@@ -2386,6 +2561,7 @@ impl DocumentCore {
+@@ -2386,6 +2700,7 @@ impl DocumentCore {
              }
          }
  
@@ -8480,7 +8844,7 @@ index 7c31daa4c..e20fa5ffe 100644
          self.document.sections[section_idx].raw_stream = None;
          self.recompose_section(section_idx);
          self.paginate_if_needed();
-@@ -2661,25 +2837,18 @@ impl DocumentCore {
+@@ -2661,25 +2976,18 @@ impl DocumentCore {
          parent_para_idx: usize,
          control_idx: usize,
      ) -> Result<String, HwpError> {
@@ -8517,7 +8881,7 @@ index 7c31daa4c..e20fa5ffe 100644
  
          let pb = match table.page_break {
              crate::model::table::TablePageBreak::None => 0,
-@@ -2783,6 +2952,18 @@ impl DocumentCore {
+@@ -2783,6 +3091,18 @@ impl DocumentCore {
          parent_para_idx: usize,
          control_idx: usize,
          json: &str,
@@ -8536,7 +8900,7 @@ index 7c31daa4c..e20fa5ffe 100644
      ) -> Result<String, HwpError> {
          use super::super::helpers::{json_bool, json_i16, json_i32, json_str, json_u32, json_u8};
  
-@@ -2797,7 +2978,7 @@ impl DocumentCore {
+@@ -2797,7 +3117,7 @@ impl DocumentCore {
              .map(|(idx, s)| (idx as u8, s.para_shape_id, s.char_shape_id as u32))
              .unwrap_or((0, 0, 0));
  
@@ -8545,7 +8909,7 @@ index 7c31daa4c..e20fa5ffe 100644
  
          if let Some(v) = json_i16(json, "cellSpacing") {
              table.cell_spacing = v;
-@@ -3105,7 +3286,7 @@ impl DocumentCore {
+@@ -3105,7 +3425,7 @@ impl DocumentCore {
              || json.contains("\"centerLine\"");
          if has_border_fill_change {
              let new_bf_id = self.create_border_fill_from_json(json);
@@ -8554,7 +8918,7 @@ index 7c31daa4c..e20fa5ffe 100644
              table.border_fill_id = new_bf_id;
              for cell in &mut table.cells {
                  cell.border_fill_id = new_bf_id;
-@@ -3116,44 +3297,61 @@ impl DocumentCore {
+@@ -3116,44 +3436,61 @@ impl DocumentCore {
          // 중간 표 캡션 삭제 시 남은 표 번호가 한컴처럼 1부터 이어지도록 보장한다.
          if caption_created || caption_changed {
              crate::parser::assign_auto_numbers(&mut self.document);
@@ -8734,3 +9098,23 @@ index 9f6f809d7..92cf5d645 100644
              cell_para,
              ParagraphBox::content_width_px(final_width, dpi),
              &styles,
+diff --git a/rhwp-studio/src/ui/cell-split-dialog.ts b/rhwp-studio/src/ui/cell-split-dialog.ts
+index a553abb60..6afb96e1b 100644
+--- a/rhwp-studio/src/ui/cell-split-dialog.ts
++++ b/rhwp-studio/src/ui/cell-split-dialog.ts
+@@ -103,6 +103,7 @@ export class CellSplitDialog {
+     rowLabel.style.textAlign = 'left';
+     this.rowInput = document.createElement('input');
+     this.rowInput.type = 'number';
++    this.rowInput.setAttribute('aria-label', '나눌 줄 수');
+     this.rowInput.className = 'dialog-input';
+     this.rowInput.style.width = '50px';
+     this.rowInput.min = '1';
+@@ -131,6 +132,7 @@ export class CellSplitDialog {
+     colLabel.style.textAlign = 'left';
+     this.colInput = document.createElement('input');
+     this.colInput.type = 'number';
++    this.colInput.setAttribute('aria-label', '나눌 칸 수');
+     this.colInput.className = 'dialog-input';
+     this.colInput.style.width = '50px';
+     this.colInput.min = '1';
