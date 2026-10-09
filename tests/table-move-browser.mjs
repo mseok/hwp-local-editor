@@ -53,14 +53,20 @@ function nativeChecks(bytes,format,p){
   const result=JSON.parse(document.moveTableOffsetByPath(0,1,json(p),850,600));
   assert.deepEqual(result,{ok:true,ppi:1,ci:0,cellPath:p});changed(source,document,p,850,600);
   assert.deepEqual(JSON.parse(document.getEventLog()).events.at(-1),{type:'TableStructureChangedByPath',section:0,para:1,cellPath:p,operation:'moveTable'});
-  const reopened=new HwpDocument(exported(document,format));try{changed(source,reopened,p,850,600);}finally{reopened.free();}
-  document.moveTableOffsetByPath(0,1,json(p),-850,-600);changed(source,document,p,0,0);
+  const reopened=new HwpDocument(exported(document,format));try{changed(source,reopened,p,850,600);assert.equal(document.getPageRenderTree(0),reopened.getPageRenderTree(0),'Live table geometry must agree with the saved and reopened document');unchangedGeometry(source,document,p);}finally{reopened.free();}
+  document.moveTableOffsetByPath(0,1,json(p),-850,-600);changed(source,document,p,0,0);unchangedGeometry(source,document,p);
   pass(format+' '+p.length+'-level native move/reject/event/export/inverse');
+  document.insertText(0,0,0,'FLOW-GROWTH '.repeat(60));
+  const grown=JSON.parse(document.getTableCellBboxesByPath(0,1,json(p.slice(0,1))))[0],original=JSON.parse(source.getTableCellBboxesByPath(0,1,json(p.slice(0,1))))[0];
+  assert(grown.y>original.y,'Growing preceding text must advance the table instead of reusing its old source anchor');assert.equal(grown.h,original.h);
+  const grownReopened=new HwpDocument(exported(document,format));try{assert.equal(document.getPageRenderTree(0),grownReopened.getPageRenderTree(0),'Reflowed preceding text must retain its current flow after reopening');}finally{grownReopened.free();}
+  pass(format+' '+p.length+'-level preceding-text growth invalidates stale anchor');
  }finally{document.free();source.free();}
  const legacy=new HwpDocument(bytes),delegated=new HwpDocument(bytes);
  try{
   assert.equal(delegated.moveTableOffsetByPath(0,1,json(p.slice(0,1)),850,600),legacy.moveTableOffset(0,1,0,850,600));
   assert.deepEqual(exported(delegated,format),exported(legacy,format),'Flat delegation retains byte-identical legacy behavior');
+  const reopened=new HwpDocument(exported(delegated,format));try{assert.equal(delegated.getPageRenderTree(0),reopened.getPageRenderTree(0),'Root-table preview must agree with saved geometry');}finally{reopened.free();}
   pass(format+' '+p.length+'-level flat delegation byte parity');
  }finally{legacy.free();delegated.free();}
 }
@@ -98,7 +104,7 @@ try{
   nativeChecks(bytes,entry.format,p);
   try{await page.goto(base+'/editor?id='+entry.id);await ready(page);await select(page);await frame.getByRole('textbox',{name:'문서 편집 입력',exact:true}).press('ArrowRight');await save(page,1);let result=new HwpDocument(await readFile(entry.output));try{changed(source,result,p,850,0);unchangedGeometry(source,result,p);}finally{result.free();}
    await menu(frame,'되돌리기');await save(page,2);result=new HwpDocument(await readFile(entry.output));try{changed(source,result,p,0,0);unchangedGeometry(source,result,p);}finally{result.free();}
-   let previous=await page.locator('#status').getAttribute('data-change-revision');await menu(frame,'다시 실행');await page.waitForFunction(old=>{const d=document.querySelector('#status').dataset;return Number(d.changeRevision)>Number(old)&&d.changeRevision===d.savedRevision;},previous);await page.reload();await ready(page);await save(page,3);await page.goto(base+'/editor?id='+entry.id+'&result=1');await ready(page);await select(page);
+   let previous=await page.locator('#status').getAttribute('data-change-revision');await menu(frame,'다시 실행');await page.waitForFunction(old=>{const d=document.querySelector('#status').dataset;return Number(d.changeRevision)>Number(old)&&d.changeRevision===d.savedRevision;},previous);const liveSvg=await page.evaluate(()=>window.localStudio.getPageSvg(0));await page.reload();await ready(page);await save(page,3);await page.goto(base+'/editor?id='+entry.id+'&result=1');await ready(page);assert.equal(await page.evaluate(()=>window.localStudio.getPageSvg(0)),liveSvg,'Visible editing preview and reopened saved preview must agree');pass(entry.format+' '+depth+'-level browser live/save/reopen preview parity');await select(page);
    result=new HwpDocument(await readFile(entry.output));let box;try{changed(source,result,p,850,0);box=JSON.parse(result.getTableCellBboxesByPath(0,1,json(p)))[1];}finally{result.free();}
    const canvas=frame.locator('.document-page-canvas').first();await canvas.scrollIntoViewIfNeeded();const bounds=await canvas.boundingBox(),point={x:bounds.x+box.x+box.w/2,y:bounds.y+box.y+box.h/2};await page.mouse.move(point.x,point.y);await page.mouse.down();await page.mouse.move(point.x+8,point.y+8,{steps:4});await page.mouse.up();await save(page,4);
    result=new HwpDocument(await readFile(entry.output));let props;try{ancestors(source,result,p);props=JSON.parse(result.getTablePropertiesByPath(0,1,json(p)));assert.equal(props.horzOffset,300+850+600);assert.equal(props.vertOffset,2000+600);}finally{result.free();}
