@@ -39,6 +39,14 @@ Actual Codex in-app browser computer use additionally reopened the complex HWPX 
 
 The launcher and server check build metadata against the current public patch, overlay and upstream pin before opening a task. Missing engine files, changed patches and a different upstream pin are rejected. A fresh build records its source version only after all engine/Studio/SDK outputs are copied. This avoids current host controls silently running with an older built engine after an update.
 
-## Re-run
+## Character formatting and table structure
 
-Run npm test, npm run audit and, after building and starting the server, npm run test:browser. Run npm run test:agent for the multi-file workflow and npm run test:complex for complex objects and preservation failures; these start/stop their own servers and use fresh ignored task directories. The audit expects release files to be staged. Browser tests require Playwright with a Chromium installation; PLAYWRIGHT_PACKAGE_PATH and PLAYWRIGHT_EXECUTABLE_PATH can point to an existing installation. Test reports and screenshots are written to ignored test-results/.
+Verified on 2026-10-09 with fresh synthetic HWP and HWPX documents. Five additional browser checks apply bold 14 pt centered body text, bold table-cell text, insert a row and column through the menus, recover the operation journal after reload, and delete a selected row and column. Reopened outputs preserve the requested character/paragraph properties, exact cell placement and expected deletions, unaffected body styles and source hashes. The tests require no browser errors, console warnings or external runtime requests.
+
+These checks found and fixed two real UI defects: find-selected cells omitted the path required by character formatting, and table deletion updated flat cell coordinates while leaving a stale path and text selection. Toolbar controls and the row/column count field now have explicit accessible names. The general recovery test also waits for the newly selected filename, rather than accepting the previous document's ready flag while a file open is pending.
+
+Actual Codex in-app browser computer use additionally changed a synthetic HWPX title and table-cell formatting, inserted a row and column, saved/reopened the result and deleted a selected column. The output's requested styles, dimensions and unchanged original hash were checked separately. Column insertion can grow a table beyond the page; this test does not establish automatic table fitting. One MutationObserver console error was observed in the in-app editor, with no matching error in the headless suites or task-list page; its origin is not yet established. Native Hancom and live Claude execution remain unverified.
+
+## Re-run commands
+
+Run npm test, npm run audit and, after building and starting the server, npm run test:browser. Run npm run test:agent for the multi-file workflow, npm run test:complex for complex objects and preservation failures, and npm run test:format for formatting and table structure; these start/stop their own servers and use fresh ignored task directories. The audit expects release files to be staged. Browser tests require Playwright with a Chromium installation; PLAYWRIGHT_PACKAGE_PATH and PLAYWRIGHT_EXECUTABLE_PATH can point to an existing installation. Test reports and screenshots are written to ignored test-results/.

@@ -10,7 +10,7 @@ const context=await browser.newContext({viewport:{width:1200,height:950},acceptD
 const report={checks:[],errors:[],externalRequests:[]};
 const pass=name=>{report.checks.push(name);console.log('PASS',name);};
 context.on('page',page=>{page.on('pageerror',e=>report.errors.push(e.message));page.on('dialog',d=>d.accept());page.on('request',r=>{if(!r.url().startsWith(base+'/')&&!/^(blob|data):/.test(r.url()))report.externalRequests.push(r.url());});});
-const ready=p=>p.waitForFunction(()=>window.editorReady,null,{timeout:45000});
+const ready=(p,name)=>p.waitForFunction(name=>window.editorReady&&(!name||document.querySelector('#status').textContent.split(' · ')[0]===name),name,{timeout:45000});
 const text=p=>p.evaluate(async()=>new DOMParser().parseFromString(await localStudio.getPageSvg(0),'image/svg+xml').documentElement.textContent.replace(/\s+/g,''));
 const edit=async(p,marker)=>{await p.frameLocator('#editor iframe').locator('.document-page-canvas').first().click({position:{x:160,y:110}});await p.keyboard.insertText(marker);await p.waitForFunction(()=>Number(document.querySelector('#status').dataset.changeRevision)>0);await p.evaluate(()=>localAutosave.flush());};
 const download=async p=>{const pending=p.waitForEvent('download');await p.locator('#save').click();const file=await pending;return {bytes:await readFile(await file.path()),name:file.suggestedFilename()};};
@@ -21,7 +21,7 @@ try{
     const doc=new HwpDocument(new Uint8Array(bytes));doc.createBlankDocument();doc.insertText(0,0,0,'Synthetic public test document');const output=Array.from(doc.exportHwpx());doc.free();return output;
   },Array.from(blank));
   const source=Buffer.from(generated);
-  await a.locator('#file').setInputFiles({name:'synthetic.hwpx',mimeType:'application/octet-stream',buffer:source});await ready(a);
+  await a.locator('#file').setInputFiles({name:'synthetic.hwpx',mimeType:'application/octet-stream',buffer:source});await ready(a,'synthetic.hwpx');
   assert.deepEqual((await download(a)).bytes,source);pass('unchanged download preserves source bytes');
   await edit(a,'AUTOSAVE_A');assert.ok((await text(a)).includes('AUTOSAVE_A'));
   assert.equal(await a.evaluate(()=>localStudio.element.contentWindow.rhwpStudio.localRecovery.metrics().exports),0);pass('automatic journal save performs no full-document export');
@@ -31,10 +31,10 @@ try{
   assert.ok((await text(a)).includes('ONLY_A'));assert.ok(!(await text(a)).includes('ONLY_B'));
   assert.ok((await text(b)).includes('ONLY_B'));assert.ok(!(await text(b)).includes('ONLY_A'));pass('two document windows remain independent');
   const exported=await download(a);assert.match(exported.name,/\.hwpx$/);
-  const c=await context.newPage();await c.goto(base+'/editor');await c.waitForFunction(()=>window.localStudio);await c.locator('#file').setInputFiles({name:exported.name,mimeType:'application/octet-stream',buffer:exported.bytes});await ready(c);assert.equal(await text(c),await text(a));pass('downloaded edited HWPX reopens');
+  const c=await context.newPage();await c.goto(base+'/editor');await c.waitForFunction(()=>window.localStudio);await c.locator('#file').setInputFiles({name:exported.name,mimeType:'application/octet-stream',buffer:exported.bytes});await ready(c,exported.name);assert.equal(await text(c),await text(a));pass('downloaded edited HWPX reopens');
   await c.evaluate(()=>localStudio.commands.execute('edit:undo'));await c.evaluate(()=>localAutosave.flush());
   const preview=await context.newPage();await preview.goto(base+'/?draft='+await a.evaluate(()=>localAutosave.state().draftId));await preview.waitForFunction(()=>window.previewResult?.pageCount);assert.equal(await preview.locator('.page').count(),1);pass('local viewer renders downloaded working-copy snapshot');
-  await c.locator('#file').setInputFiles({name:'synthetic.hwp',mimeType:'application/octet-stream',buffer:blank});await ready(c);await edit(c,'LEGACY_HWP');const legacy=await download(c);assert.match(legacy.name,/\.hwp$/);await c.locator('#file').setInputFiles({name:legacy.name,mimeType:'application/octet-stream',buffer:legacy.bytes});await ready(c);assert.ok((await text(c)).includes('LEGACY_HWP'));pass('edited HWP downloads and reopens as HWP');
+  await c.locator('#file').setInputFiles({name:'synthetic.hwp',mimeType:'application/octet-stream',buffer:blank});await ready(c,'synthetic.hwp');await edit(c,'LEGACY_HWP');const legacy=await download(c);assert.match(legacy.name,/\.hwp$/);await c.locator('#file').setInputFiles({name:legacy.name,mimeType:'application/octet-stream',buffer:legacy.bytes});await ready(c,legacy.name);assert.ok((await text(c)).includes('LEGACY_HWP'));pass('edited HWP downloads and reopens as HWP');
   assert.deepEqual(report.errors,[]);assert.deepEqual(report.externalRequests,[]);pass('no page errors or external runtime requests');
   await a.screenshot({path:'test-results/public-editor.png'});
 }finally{

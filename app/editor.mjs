@@ -45,6 +45,11 @@ try {
     renderer: 'canvas2d', plugins: ['hwpctrl'],
   });
   window.localStudio = studio;
+  const studioDocument = studio.element.contentDocument;
+  for (const [id, label] of Object.entries({
+    'btn-bold': '굵게', 'btn-italic': '기울임', 'btn-underline': '밑줄', 'btn-strike': '취소선',
+    'font-size': '글자 크기(pt)', 'font-name': '글꼴', 'linespacing-select': '줄 간격',
+  })) studioDocument.getElementById(id)?.setAttribute('aria-label', label);
   window.editorReady = false;
   const recovery = studio.element.contentWindow.rhwpStudio.localRecovery;
   const nativeLoadFile = studio.loadFile.bind(studio);

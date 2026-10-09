@@ -6594,3 +6594,71 @@ index a00248c..c98733e 100644
      "CanvasGradient",
      "CanvasPattern",
      "HtmlCanvasElement",
+diff --git a/rhwp-studio/src/ui/find-dialog.ts b/rhwp-studio/src/ui/find-dialog.ts
+index 6407dd3bb..f1f2e61fc 100644
+--- a/rhwp-studio/src/ui/find-dialog.ts
++++ b/rhwp-studio/src/ui/find-dialog.ts
+@@ -26,6 +26,7 @@ export function navigateToSearchHit(ih: ReturnType<CommandServices['getInputHand
+         controlIndex: cell.ctrlIdx,
+         cellIndex: cell.cellIdx,
+         cellParaIndex: cell.cellPara,
++        cellPath: [{ controlIndex: cell.ctrlIdx, cellIndex: cell.cellIdx, cellParaIndex: cell.cellPara }],
+       }
+     : {
+         sectionIndex: hit.sec!,
+diff --git a/rhwp-studio/src/ui/table-row-column-dialog.ts b/rhwp-studio/src/ui/table-row-column-dialog.ts
+index dffc08cd0..7e8bd19b5 100644
+--- a/rhwp-studio/src/ui/table-row-column-dialog.ts
++++ b/rhwp-studio/src/ui/table-row-column-dialog.ts
+@@ -104,6 +104,7 @@ export class TableInsertRowColumnDialog extends ModalDialog {
+ 
+     this.countInput = document.createElement('input');
+     this.countInput.type = 'number';
++    this.countInput.setAttribute('aria-label', t('dialog.tableRowColumn.countLabel.text'));
+     this.countInput.className = 'dialog-input';
+     this.countInput.min = '1';
+     this.countInput.max = String(MAX_INSERT_COUNT);
+diff --git a/rhwp-studio/src/command/commands/table.ts b/rhwp-studio/src/command/commands/table.ts
+index c6de9bdb5..8321fc735 100644
+--- a/rhwp-studio/src/command/commands/table.ts
++++ b/rhwp-studio/src/command/commands/table.ts
+@@ -237,6 +237,7 @@ function applyTableInsertRowColumn(
+     kind: 'snapshot',
+     operationType: mode.startsWith('row') ? 'insertTableRow' : 'insertTableColumn',
+     operation: (wasm) => {
++      ih.clearTextSelection();
+       for (let i = 0; i < count; i += 1) {
+         switch (mode) {
+           case 'row-above':
+@@ -300,6 +301,7 @@ function applyTableDeleteRowColumn(
+     kind: 'snapshot',
+     operationType: mode === 'row' ? 'deleteTableRow' : 'deleteTableColumn',
+     operation: (wasm) => {
++      ih.clearTextSelection();
+       const res = mode === 'row'
+         ? wasm.deleteTableRow(pos.sectionIndex, pos.parentParaIndex!, pos.controlIndex!, cellInfo.row)
+         : wasm.deleteTableColumn(pos.sectionIndex, pos.parentParaIndex!, pos.controlIndex!, cellInfo.col);
+@@ -313,7 +315,9 @@ function applyTableDeleteRowColumn(
+         // 표 소멸 → 표 밖 본문 위치로 폴백.
+         return { sectionIndex: pos.sectionIndex, paragraphIndex: pos.parentParaIndex ?? 0, charOffset: 0 };
+       }
+-      return { ...pos, charOffset: 0, ...corrected };
++      return { ...pos, charOffset: 0, ...corrected,
++        cellPath: [{ controlIndex: pos.controlIndex!, ...corrected }],
++      };
+     },
+   }), '줄/칸 지우기');
+   restoreEditorFocus(ih);
+diff --git a/rhwp-studio/src/engine/input-handler.ts b/rhwp-studio/src/engine/input-handler.ts
+index 043ee77ee..ba5e14dc6 100644
+--- a/rhwp-studio/src/engine/input-handler.ts
++++ b/rhwp-studio/src/engine/input-handler.ts
+@@ -4859,6 +4859,8 @@ export class InputHandler {
+   /** 현재 커서 위치를 반환한다 */
+   getCursorPosition(): DocumentPosition { return this.cursor.getPosition(); }
+ 
++  clearTextSelection(): void { this.cursor.clearSelection(); }
++
+   /** 별도 좌표계·개체 선택을 본문 링크 편집으로 오인하지 않도록 명시적으로 차단한다. */
+   canEditHyperlink(): boolean {
+     return !this.cursor.isInHeaderFooter() && !this.cursor.isInFootnote()
