@@ -6662,3 +6662,95 @@ index 043ee77ee..ba5e14dc6 100644
    /** 별도 좌표계·개체 선택을 본문 링크 편집으로 오인하지 않도록 명시적으로 차단한다. */
    canEditHyperlink(): boolean {
      return !this.cursor.isInHeaderFooter() && !this.cursor.isInFootnote()
+diff --git a/rhwp-studio/vite.config.ts b/rhwp-studio/vite.config.ts
+index f860fb8fa..202855e83 100644
+--- a/rhwp-studio/vite.config.ts
++++ b/rhwp-studio/vite.config.ts
+@@ -110,6 +110,7 @@ export default defineConfig({
+       },
+     },
+     VitePWA({
++      disable: process.env.RHWP_LOCAL_EDITOR === '1',
+       registerType: 'autoUpdate',
+       includeAssets: ['favicon.ico', 'icons/*.png'],
+       manifest: {
+diff --git a/rhwp-studio/src/ui/table-cell-props-dialog.ts b/rhwp-studio/src/ui/table-cell-props-dialog.ts
+index 8e99cf288..2499c8c60 100644
+--- a/rhwp-studio/src/ui/table-cell-props-dialog.ts
++++ b/rhwp-studio/src/ui/table-cell-props-dialog.ts
+@@ -100,6 +100,7 @@ export class TableCellPropsDialog extends ModalDialog {
+ 
+   // ─── 기본 탭 필드 ───
+   private basicWidthInput!: HTMLInputElement;
++  private initialWidthDisplay = "";
+   private basicHeightInput!: HTMLInputElement;
+   private treatAsCharCheck!: HTMLInputElement;
+   private wrapBtns: HTMLButtonElement[] = [];
+@@ -467,6 +468,8 @@ export class TableCellPropsDialog extends ModalDialog {
+     const sizeRow = this.row();
+     sizeRow.appendChild(this.label(i18nText('dialog.tableCellProps.label.label')));
+     this.basicWidthInput = this.numberInput();
++    this.basicWidthInput.setAttribute('aria-label', '표 너비(mm)');
++    this.basicWidthInput.addEventListener('input', () => this.basicWidthInput.setCustomValidity(''));
+     sizeRow.appendChild(this.basicWidthInput);
+     sizeRow.appendChild(this.unit('mm'));
+     sizeRow.appendChild(this.label(i18nText('dialog.tableCellProps.label.label.x3cc869')));
+@@ -476,7 +479,7 @@ export class TableCellPropsDialog extends ModalDialog {
+     sizeSection.appendChild(sizeRow);
+     const sizeNote = document.createElement('div');
+     sizeNote.className = 'tcp-note';
+-    sizeNote.textContent = i18nText('dialog.tableCellProps.sizeNote.text');
++    sizeNote.textContent = '표 너비를 바꾸면 모든 셀의 너비를 같은 비율로 조절합니다. 높이는 읽기 전용입니다.';
+     sizeSection.appendChild(sizeNote);
+     frag.appendChild(sizeSection);
+ 
+@@ -1291,7 +1294,8 @@ export class TableCellPropsDialog extends ModalDialog {
+     // 기본 탭
+     if (tp.tableWidth != null) {
+       this.basicWidthInput.value = hwpunitToMm(tp.tableWidth).toFixed(1);
+-      this.basicWidthInput.readOnly = true;
++      this.initialWidthDisplay = this.basicWidthInput.value;
++      this.basicWidthInput.readOnly = tp.tableWidth <= 0;
+       this.basicWidthInput.style.removeProperty('background');
+     }
+     if (tp.tableHeight != null) {
+@@ -1353,8 +1357,24 @@ export class TableCellPropsDialog extends ModalDialog {
+     }
+   }
+ 
+-  protected onConfirm(): void {
++  protected onConfirm(): void | boolean {
+     const { sec, ppi, ci } = this.tableCtx;
++    let widthUpdates: { cellIdx: number; widthDelta: number }[] = [];
++    if (!this.basicWidthInput.readOnly && this.basicWidthInput.value !== this.initialWidthDisplay) {
++      const width = Number(this.basicWidthInput.value);
++      const scale = mmToHwpunit(width) / this.tableProps.tableWidth!;
++      const { cellCount } = this.wasm.getTableDimensions(sec, ppi, ci);
++      widthUpdates = Array.from({ length: cellCount }, (_, cellIdx) => {
++        const current = this.wasm.getCellProperties(sec, ppi, ci, cellIdx).width;
++        return { cellIdx, widthDelta: Math.round(current * scale) - current };
++      });
++      if (!Number.isFinite(width) || width <= 0 || this.cellApplySizeCheck.checked
++        || widthUpdates.some(update => this.wasm.getCellProperties(sec, ppi, ci, update.cellIdx).width + update.widthDelta < 200)) {
++        this.basicWidthInput.setCustomValidity('셀 크기 변경과 별도로, 각 셀 너비가 0.8mm 이상이 되는 표 너비를 입력하세요.');
++        this.basicWidthInput.reportValidity();
++        return false;
++      }
++    }
+ 
+     // 셀 속성 수정
+     const newCellProps: Record<string, unknown> = {};
+@@ -1454,10 +1474,11 @@ export class TableCellPropsDialog extends ModalDialog {
+       }
+     }
+ 
+-    const applyProps = () => {
++    const applyProps = () => this.wasm.runInBatch(() => {
++      if (widthUpdates.length) this.wasm.resizeTableCells(sec, ppi, ci, widthUpdates);
+       this.wasm.setCellProperties(sec, ppi, ci, this.cellIdx, newCellProps as Partial<CellProperties>);
+       this.wasm.setTableProperties(sec, ppi, ci, newTableProps as Partial<TableProperties>);
+-    };
++    });
+     // 표/셀 속성 변경도 undo 대상이다 — 편집 라우터를 통과시켜 스냅샷으로
+     // 기록한다 (#1320 계약, picture-props-dialog(#2027)와 동일 패턴).
+     // services 미주입 환경에서만 직접 적용 fallback.

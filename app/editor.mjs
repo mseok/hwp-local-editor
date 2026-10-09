@@ -40,6 +40,12 @@ copies.addEventListener('change', () => {
 });
 
 try {
+  // Retire the upstream PWA so new iframes cannot load cached engine/UI builds.
+  if ('serviceWorker' in navigator) {
+    const scope = new URL('/rhwp/', location.href).href;
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.filter(item => item.scope === scope).map(item => item.unregister()));
+  }
   const studio = await createStudio('#editor', {
     studioUrl: new URL('/rhwp/?chrome=embed', location.href).href,
     renderer: 'canvas2d', plugins: ['hwpctrl'],

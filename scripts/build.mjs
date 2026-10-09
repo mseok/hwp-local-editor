@@ -41,7 +41,7 @@ const wasmHash=createHash('sha256').update(await readFile(path.join(upstream,'pk
 const main=path.join(upstream,'rhwp-studio/src/main.ts');
 await writeFile(main,(await readFile(main,'utf8')).replace(/version: 'local-commands-v1:[^']+'/g,`version: 'local-commands-v1:${sourceVersion}:${wasmHash}'`));
 run('npm',['ci','--no-audit','--no-fund'],path.join(upstream,'rhwp-studio'));
-run('npm',['run','build','--','--base=/rhwp/'],path.join(upstream,'rhwp-studio'),{RHWP_DISABLE_EXTERNAL_WEBFONTS:'1'});
+run('npm',['run','build','--','--base=/rhwp/'],path.join(upstream,'rhwp-studio'),{RHWP_DISABLE_EXTERNAL_WEBFONTS:'1',RHWP_LOCAL_EDITOR:'1'});
 await mkdir(path.join(root,'.build'),{recursive:true});
 await cp(path.join(upstream,'rhwp-studio/dist'),path.join(root,'.build/studio'),{recursive:true});
 await cp(path.join(upstream,'pkg'),path.join(root,'.build/core'),{recursive:true});

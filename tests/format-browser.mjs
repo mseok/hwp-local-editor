@@ -1,5 +1,5 @@
 import {createRequire} from 'node:module';
-import {readFile,mkdir,writeFile,mkdtemp} from 'node:fs/promises';
+import {readFile,mkdir,writeFile,mkdtemp,unlink} from 'node:fs/promises';
 import {spawn} from 'node:child_process';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -33,6 +33,7 @@ const child=spawn(process.execPath,['app/server.mjs'],{env:{...process.env,PORT:
 const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_EXECUTABLE_PATH||undefined});
 const context=await browser.newContext({viewport:{width:1280,height:1050}});
 const report={root,checks:[],errors:[],externalRequests:[],warnings:[]};
+const staleWorker=path.resolve('.build/studio/test-stale-worker.js');
 context.on('page',page=>{
   page.on('pageerror',error=>report.errors.push(error.message));
   page.on('console',message=>{if(['warning','error'].includes(message.type()))report.warnings.push(message.text());});
@@ -79,6 +80,19 @@ try{
     child.once('error',reject);child.once('exit',code=>reject(new Error('Server exited '+code+': '+stderr)));
     child.stdout.once('data',()=>{clearTimeout(timer);resolve();});
   });
+  assert.ok(!(await readFile('.build/studio/index.html','utf8')).includes('registerSW.js'));
+  await writeFile(staleWorker,`addEventListener('install',()=>self.skipWaiting());addEventListener('activate',e=>e.waitUntil(self.clients.claim()));addEventListener('fetch',e=>{if(e.request.mode==='navigate')e.respondWith(new Response('<h1>STALE_EDITOR_BUILD</h1>',{headers:{'Content-Type':'text/html'}}));});`);
+  const cachedPage=await context.newPage();await cachedPage.goto(base+'/tasks');
+  await cachedPage.evaluate(async()=>{
+    const registration=await navigator.serviceWorker.register('/rhwp/test-stale-worker.js',{scope:'/rhwp/'});
+    const worker=registration.installing||registration.waiting||registration.active;
+    if(worker.state!=='activated')await new Promise(resolve=>worker.addEventListener('statechange',()=>{if(worker.state==='activated')resolve();}));
+    const frame=document.createElement('iframe');frame.src='/rhwp/stale-frame';frame.id='stale-frame';document.body.append(frame);
+  });
+  await cachedPage.frameLocator('#stale-frame').getByRole('heading',{name:'STALE_EDITOR_BUILD',exact:true}).waitFor();
+  await cachedPage.goto(base+'/editor?id='+workspace.documents[0].id);await ready(cachedPage);
+  assert.equal(await cachedPage.evaluate(async()=>(await navigator.serviceWorker.getRegistrations()).some(item=>item.scope===location.origin+'/rhwp/')),false);
+  pass('stale upstream service worker retired before document load');await cachedPage.close();
   for(const entry of workspace.documents){
     const page=await context.newPage();await page.goto(base+'/editor?id='+entry.id);await ready(page);
     const frame=page.frameLocator('#editor iframe');
@@ -98,11 +112,28 @@ try{
     finally{formatted.free();}
     await insert(page,'기존 셀 A','위쪽에 줄 추가하기');
     await insert(page,'기존 셀 A','왼쪽에 칸 추가하기');
+    const original=new HwpDocument(await readFile(entry.source));
+    const originalWidth=JSON.parse(original.getTableProperties(0,2,0)).tableWidth;original.free();
+    const widthMm=(originalWidth*25.4/7200).toFixed(1);
+    await select(page,'기존 셀 A');
+    await frame.locator('#menu-bar').getByText('표',{exact:true}).click();
+    await frame.getByText('표/셀 속성',{exact:true}).click();
+    await frame.getByRole('button',{name:'기본',exact:true}).click();
+    const width=frame.getByRole('spinbutton',{name:'표 너비(mm)',exact:true});
+    assert.equal(await width.getAttribute('readonly'),null);
+    await width.fill('0');await frame.getByRole('button',{name:'확인',exact:true}).click();
+    assert.equal(await width.isVisible(),true);
+    await width.fill('0.1');await frame.getByRole('button',{name:'확인',exact:true}).click();
+    assert.equal(await width.isVisible(),true);
+    await width.fill(widthMm);await frame.getByRole('button',{name:'확인',exact:true}).click();
     await save(page,2);
     const source=new HwpDocument(await readFile(entry.source));
     let result=new HwpDocument(await readFile(entry.output));
     try{
       verifyStyles(result,source);
+      assert.ok(Math.abs(JSON.parse(result.getTableProperties(0,2,0)).tableWidth-originalWidth)<30);
+      for(let cell=0;cell<9;cell++)assert.ok(JSON.parse(result.getCellProperties(0,2,0,cell)).width>=200);
+      pass(entry.format+' explicit table width and rejected zero/tiny widths survive saved reopen');
       assert.deepEqual(JSON.parse(result.getTableDimensions(0,2,0)),{rowCount:3,colCount:3,cellCount:9});
       // Added empty cells introduce expected blank lines in the text export.
       const nonempty=text=>text.split('\r\n').filter(Boolean);
@@ -134,6 +165,7 @@ try{
   }
   assert.deepEqual(report.errors,[]);assert.deepEqual(report.warnings,[]);assert.deepEqual(report.externalRequests,[]);pass('no browser errors, warnings or external runtime requests');
 }finally{
+  await unlink(staleWorker).catch(error=>{if(error.code!=='ENOENT')throw error;});
   await writeFile('test-results/format-browser.json',JSON.stringify(report,null,2));await browser.close();
   if(!child.killed){child.kill();await new Promise(resolve=>child.once('close',resolve));}
 }
