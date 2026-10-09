@@ -12719,3 +12719,139 @@ index d4d46931d..31cbcff93 100644
                      if let RenderNodeType::TextRun(ref tr) = node.node_type {
                          return tr.cell_context.as_ref().map_or(false, |ctx| {
                              ctx.parent_para_index == parent_para
+
+diff --git a/rhwp-studio/src/ui/picture-props-dialog.ts b/rhwp-studio/src/ui/picture-props-dialog.ts
+index 0f3466ce9..04932c90a 100644
+--- a/rhwp-studio/src/ui/picture-props-dialog.ts
++++ b/rhwp-studio/src/ui/picture-props-dialog.ts
+@@ -457,6 +457,7 @@ export class PicturePropsDialog {
+     this.sizeLockControls.push(widthTypeSelect);
+     wRow.appendChild(widthTypeSelect);
+     this.widthInput = this.numberInput(0);
++    this.widthInput.setAttribute('aria-label', '개체 너비(mm)');
+     this.sizeLockControls.push(this.widthInput);
+     wRow.appendChild(this.widthInput);
+     wRow.appendChild(this.unit('mm'));
+@@ -469,6 +470,7 @@ export class PicturePropsDialog {
+     this.sizeLockControls.push(heightTypeSelect);
+     hRow.appendChild(heightTypeSelect);
+     this.heightInput = this.numberInput(0);
++    this.heightInput.setAttribute('aria-label', '개체 높이(mm)');
+     this.sizeLockControls.push(this.heightInput);
+     hRow.appendChild(this.heightInput);
+     hRow.appendChild(this.unit('mm'));
+
+diff --git a/rhwp-studio/src/ui/equation-editor-dialog.ts b/rhwp-studio/src/ui/equation-editor-dialog.ts
+index 92f2d96e4..5543d585b 100644
+--- a/rhwp-studio/src/ui/equation-editor-dialog.ts
++++ b/rhwp-studio/src/ui/equation-editor-dialog.ts
+@@ -286,7 +286,7 @@ export class EquationEditorDialog {
+ 
+     this.scriptArea.value = this.origProps.script || '';
+     this.scriptErrorLabel.style.display = 'none';
+-    this.fontSizeInput.value = String(Math.round(this.origProps.fontSize / 100));
++    this.fontSizeInput.value = String(this.origProps.fontSize / 100);
+     this.colorInput.value = colorRefToHex(this.origProps.color);
+ 
+     // 싱글턴으로 재사용 + build() 는 1회만 실행되므로 이전 세션의 기호 검색어와
+@@ -395,6 +395,7 @@ export class EquationEditorDialog {
+     scriptWrap.className = 'eq-script-wrap';
+     this.scriptArea = document.createElement('textarea');
+     this.scriptArea.className = 'eq-script';
++    this.scriptArea.setAttribute('aria-label', '수식 스크립트');
+     this.scriptArea.rows = 4;
+     this.scriptArea.spellcheck = false;
+     this.scriptArea.maxLength = MAX_EQUATION_SCRIPT_LEN;
+@@ -426,9 +427,10 @@ export class EquationEditorDialog {
+     this.fontSizeInput = document.createElement('input');
+     this.fontSizeInput.type = 'number';
+     this.fontSizeInput.className = 'dialog-input';
++    this.fontSizeInput.setAttribute('aria-label', '수식 글자 크기(pt)');
+     this.fontSizeInput.min = '1';
+     this.fontSizeInput.max = '127';
+-    this.fontSizeInput.step = '1';
++    this.fontSizeInput.step = '0.01';
+     this.fontSizeInput.addEventListener('change', () => this.schedulePreview());
+     const sizeUnit = document.createElement('span');
+     sizeUnit.className = 'dialog-unit';
+@@ -440,6 +442,7 @@ export class EquationEditorDialog {
+     this.colorInput = document.createElement('input');
+     this.colorInput.type = 'color';
+     this.colorInput.className = 'eq-color-input';
++    this.colorInput.setAttribute('aria-label', '수식 글자색');
+     this.colorInput.addEventListener('change', () => this.schedulePreview());
+ 
+     propsRow.append(sizeLabel, this.fontSizeInput, sizeUnit, colorLabel, this.colorInput);
+@@ -694,8 +697,8 @@ export class EquationEditorDialog {
+       return;
+     }
+ 
+-    const fontSizePt = parseInt(this.fontSizeInput.value, 10) || 10;
+-    const fontSizeHwpunit = fontSizePt * 100;
++    const fontSizePt = parseFloat(this.fontSizeInput.value) || 10;
++    const fontSizeHwpunit = Math.round(fontSizePt * 100);
+     const color = hexToColorRef(this.colorInput.value);
+ 
+     try {
+@@ -726,8 +729,8 @@ export class EquationEditorDialog {
+       return;
+     }
+     this.scriptErrorLabel.style.display = 'none';
+-    const fontSizePt = parseInt(this.fontSizeInput.value, 10) || 10;
+-    const fontSizeHwpunit = fontSizePt * 100;
++    const fontSizePt = parseFloat(this.fontSizeInput.value) || 10;
++    const fontSizeHwpunit = Math.round(fontSizePt * 100);
+     const color = hexToColorRef(this.colorInput.value);
+ 
+     const updated: Record<string, unknown> = {};
+
+diff --git a/rhwp-studio/src/ui/equation-props-dialog.ts b/rhwp-studio/src/ui/equation-props-dialog.ts
+index 4f8ee4cf7..2a79d5451 100644
+--- a/rhwp-studio/src/ui/equation-props-dialog.ts
++++ b/rhwp-studio/src/ui/equation-props-dialog.ts
+@@ -285,14 +285,16 @@ export class EquationPropertiesDialog {
+     this.fontSizeInput = document.createElement('input');
+     this.fontSizeInput.type = 'number';
+     this.fontSizeInput.className = 'dialog-input';
++    this.fontSizeInput.setAttribute('aria-label', '수식 속성 글자 크기(pt)');
+     this.fontSizeInput.min = '1';
+     this.fontSizeInput.max = '127';
+-    this.fontSizeInput.step = '1';
++    this.fontSizeInput.step = '0.01';
+     styleFs.appendChild(this.row(t('dialog.equationProps.row.label.x76905b'), this.fontSizeInput, this.unit('pt')));
+ 
+     this.colorInput = document.createElement('input');
+     this.colorInput.type = 'color';
+     this.colorInput.className = 'eq-props-color';
++    this.colorInput.setAttribute('aria-label', '수식 속성 글자색');
+     styleFs.appendChild(this.row(t('dialog.equationProps.row.label.xa002ac'), this.colorInput));
+ 
+     this.baselineInput = document.createElement('input');
+@@ -305,6 +307,7 @@ export class EquationPropertiesDialog {
+     const scriptFs = this.fieldset(t('dialog.equationProps.fieldset.label.xcfd3ad'));
+     this.scriptArea = document.createElement('textarea');
+     this.scriptArea.className = 'eq-props-script';
++    this.scriptArea.setAttribute('aria-label', '수식 속성 스크립트');
+     this.scriptArea.rows = 6;
+     this.scriptArea.readOnly = true;
+     scriptFs.appendChild(this.scriptArea);
+@@ -328,7 +331,7 @@ export class EquationPropertiesDialog {
+     this.captionWidthInput.value = this.props.hasCaption ? formatMm(this.props.captionWidth ?? 0) : '';
+     this.captionSpacingInput.value = this.props.hasCaption ? formatMm(this.props.captionSpacing ?? 0) : '';
+     this.fontNameInput.value = this.props.fontName || '';
+-    this.fontSizeInput.value = String(Math.round(this.props.fontSize / 100));
++    this.fontSizeInput.value = String(this.props.fontSize / 100);
+     this.colorInput.value = colorRefToHex(this.props.color);
+     this.baselineInput.value = String(this.props.baseline ?? 0);
+     this.scriptArea.value = this.props.script || '';
+@@ -338,8 +341,8 @@ export class EquationPropertiesDialog {
+   private handleOk(): void {
+     if (!this.props) return;
+ 
+-    const fontSizeRaw = Math.max(1, Math.min(127, parseInt(this.fontSizeInput.value, 10) || 10));
+-    const fontSize = fontSizeRaw * 100;
++    const fontSizeRaw = Math.max(1, Math.min(127, parseFloat(this.fontSizeInput.value) || 10));
++    const fontSize = Math.round(fontSizeRaw * 100);
+     const color = hexToColorRef(this.colorInput.value);
+     const baseline = parseInt(this.baselineInput.value, 10) || 0;
+     const fontName = this.fontNameInput.value.trim();
