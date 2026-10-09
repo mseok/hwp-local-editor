@@ -13,7 +13,7 @@ initSync({module:await readFile('.build/core/rhwp_bg.wasm')});const blank=await 
 function addCaption(document,ppi,ci){document.setTableProperties(0,ppi,ci,json({hasCaption:true,captionDirection:2,captionSpacing:400}));document.insertTextInCell(0,ppi,ci,65534,0,3,'OLD-CAPTION');}
 function tableXml(width,label,caption){const d=new HwpDocument(blank);try{d.createBlankDocument();const r=JSON.parse(d.createTableEx(json({sectionIdx:0,paraIdx:0,charOffset:0,rowCount:1,colCount:2,treatAsChar:true,colWidths:[width/2,width/2]})));for(let i=0;i<2;i++)d.insertTextInCell(0,r.paraIdx,r.controlIdx,i,0,0,label+i);if(caption)addCaption(d,r.paraIdx,r.controlIdx);return unzip(Buffer.from(d.exportHwpx())).get('Contents/section0.xml').toString().match(/<hp:tbl\b[\s\S]*?<\/hp:tbl>/)[0];}finally{d.free();}}
 const files=[];
-for(const depth of [2,1,3])for(const existing of [false,true]){const d=new HwpDocument(blank);try{
+for(const depth of [3,2,1])for(const existing of [false,true]){const d=new HwpDocument(blank);try{
   d.createBlankDocument();d.insertText(0,0,0,'BODY-UNCHANGED');d.splitParagraph(0,0,14);d.createTable(0,1,0,1,2);
   for(let i=0;i<2;i++)d.insertTextInCell(0,1,0,i,0,0,(depth===1?'INNER-':'OUTER-')+i);
   let bytes=d.exportHwpx();
@@ -35,6 +35,20 @@ async function caption(page,f,object){const caret=await f.locator('.caret').boun
 const captionPath=p=>p.map((e,i)=>({...e,cellIndex:i===p.length-1?65534:e.cellIndex,cellParaIndex:i===p.length-1?0:e.cellParaIndex}));
 function captionText(d,p){const q=captionPath(p);return p.length===1?d.getTextInCell(0,1,0,65534,0,0,1000):d.getTextInCellByPath(0,1,json(q),0,1000);}
 function captionCursor(d,p){const text=captionText(d,p),rect=JSON.parse(d.getCursorRectByPath(0,1,json(captionPath(p)),Math.max(0,text.length-1))),runs=[];function visit(n){if(n.type==='TextRun'&&/표|OLD-CAPTION|CAPTION-EDIT/.test(n.text))runs.push(n);for(const c of n.children||[])visit(c);}visit(JSON.parse(d.getPageRenderTree(rect.pageIndex)));assert(runs.some(n=>rect.x>=n.bbox.x-2&&rect.x<=n.bbox.x+n.bbox.w+2&&rect.y>=n.bbox.y-2&&rect.y<=n.bbox.y+n.bbox.h+2),'The caption caret must resolve to its rendered text, not an enclosing cell');if(text.includes('CAPTION-EDIT'))assert.equal(runs.map(n=>n.text).join('').split('CAPTION-EDIT').length,16,'All caption text must render after wrapping');}
+function hostTextFits(document){
+  function visit(node,cell){
+    if(node.captionOwner)return;
+    if(node.type==='Table')cell=null;
+    if(node.type==='Cell')cell=node;
+    if(node.type==='TextRun'&&node.text&&cell&&cell.children.some(child=>child.type==='Table')){
+      const b=node.bbox,c=cell.bbox;
+      assert(b.x>=c.x-0.2&&b.x+b.w<=c.x+c.w+0.2&&b.y>=c.y-0.2&&b.y+b.h<=c.y+c.h+0.2,'Edited caption host text must remain inside its enclosing cell: '+node.text);
+      for(const table of cell.children.filter(child=>child.type==='Table')){const t=table.bbox;assert(b.x+b.w<=t.x+0.2||b.x>=t.x+t.w-0.2||b.y+b.h<=t.y+0.2||b.y>=t.y+t.h-0.2,'Host text must not overlap its nested table: '+node.text);}
+    }
+    for(const child of node.children||[])visit(child,cell);
+  }
+  for(let page=0;page<document.pageCount();page++)visit(JSON.parse(document.getPageRenderTree(page)),null);
+}
 function preserved(source,result,p){
   for(let depth=1;depth<p.length;depth++){const a=json(p.slice(0,depth));assert.equal(result.getTablePropertiesByPath(0,1,a),source.getTablePropertiesByPath(0,1,a),'Caption editing must not alter an enclosing table');const dims=JSON.parse(source.getTableDimensionsByPath(0,1,a));for(let i=0;i<dims.cellCount;i++)assert.equal(result.getCellPropertiesByPath(0,1,a,i),source.getCellPropertiesByPath(0,1,a,i));}
   for(let i=0;i<2;i++){const q=p.map((e,j)=>({...e,cellIndex:j===p.length-1?i:0}));assert.equal(result.getTextInCellByPath(0,1,json(q),0,100),source.getTextInCellByPath(0,1,json(q),0,100));assert.equal(result.getCellPropertiesByPath(0,1,json(p),i),source.getCellPropertiesByPath(0,1,json(p),i));}
@@ -51,9 +65,9 @@ try{for(const entry of data.documents){const depth=Number(entry.name.match(/dept
     if(!existing){await command(f,'되돌리기','편집');await saved();result=new HwpDocument(await readFile(entry.output));try{assert.equal(JSON.parse(result.getTablePropertiesByPath(0,1,json(p))).hasCaption,false);assert.equal(result.getTextFileUnicode(),source.getTextFileUnicode());preserved(source,result,p);}finally{result.free();}await command(f,'다시 실행','편집');await saved();result=new HwpDocument(await readFile(entry.output));try{assert.equal(captionText(result,p),captionBase);captionCursor(result,p);preserved(source,result,p);}finally{result.free();}}
     const input=f.getByRole('textbox',{name:'문서 편집 입력',exact:true});await input.pressSequentially(suffix);await input.press('Backspace');await saved();
     const expected=captionBase+suffix.slice(0,-1),undeleted=captionBase+suffix;
-    result=new HwpDocument(await readFile(entry.output));try{assert.equal(captionText(result,p),expected);preserved(source,result,p);captionCursor(result,p);const xml=unzip(Buffer.from(result.exportHwpx())).get('Contents/section0.xml').toString();assert.equal((xml.match(/<hp:autoNum /g)||[]).length,1,'The caption autonumber must survive text editing');}finally{result.free();}
+    result=new HwpDocument(await readFile(entry.output));try{assert.equal(captionText(result,p),expected);preserved(source,result,p);captionCursor(result,p);hostTextFits(result);const xml=unzip(Buffer.from(result.exportHwpx())).get('Contents/section0.xml').toString();assert.equal((xml.match(/<hp:autoNum /g)||[]).length,1,'The caption autonumber must survive text editing');}finally{result.free();}
     await command(f,'되돌리기','편집');await saved();result=new HwpDocument(await readFile(entry.output));try{assert.equal(captionText(result,p),undeleted);preserved(source,result,p);}finally{result.free();}await command(f,'다시 실행','편집');await acknowledge(page);await page.reload();await ready(page);await saved();
-    await page.goto(base+'/editor?id='+entry.id+'&result=1');await ready(page);result=new HwpDocument(await readFile(entry.output));try{assert.equal(captionText(result,p),expected);preserved(source,result,p);captionCursor(result,p);assert.equal(digest(await readFile(entry.source)),entry.sourceSha256);const receipt=JSON.parse(await readFile(entry.output+'.receipt.json'));assert.equal(receipt.contentLoss.count,0);assert.equal(receipt.outputSha256,digest(await readFile(entry.output)));}finally{result.free();}
+    await page.goto(base+'/editor?id='+entry.id+'&result=1');await ready(page);result=new HwpDocument(await readFile(entry.output));try{assert.equal(captionText(result,p),expected);preserved(source,result,p);captionCursor(result,p);hostTextFits(result);assert.equal(digest(await readFile(entry.source)),entry.sourceSha256);const receipt=JSON.parse(await readFile(entry.output+'.receipt.json'));assert.equal(receipt.contentLoss.count,0);assert.equal(receipt.outputSha256,digest(await readFile(entry.output)));}finally{result.free();}
     pass(entry.format+' '+depth+'-level '+(existing?'existing':'new')+' '+(object?'object':'cell')+' caption creation/typing/delete/undo/recovery/save retains scope');
   }finally{source.free();await page.close();}
 }assert.deepEqual(report.errors,[]);assert.deepEqual(report.warnings,[]);assert.deepEqual(report.externalRequests,[]);pass('no browser errors, warnings or external requests');
