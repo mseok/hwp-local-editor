@@ -1,5 +1,5 @@
 diff --git a/rhwp-studio/src/core/wasm-bridge.ts b/rhwp-studio/src/core/wasm-bridge.ts
-index 58162bab6..573a1ea70 100644
+index 58162bab6..18e2ce387 100644
 --- a/rhwp-studio/src/core/wasm-bridge.ts
 +++ b/rhwp-studio/src/core/wasm-bridge.ts
 @@ -10,6 +10,7 @@ import type { HyperlinkTarget, HyperlinkContext } from './hyperlink';
@@ -148,7 +148,7 @@ index 58162bab6..573a1ea70 100644
 +    return JSON.parse(this.doc.getTablePropertiesByPath(sec, parentPara, pathJson));
 +  }
 +
-+  setTablePropertiesByPath(sec: number, parentPara: number, pathJson: string, props: Partial<TableProperties>): { ok: boolean } {
++  setTablePropertiesByPath(sec: number, parentPara: number, pathJson: string, props: Partial<TableProperties>): { ok: boolean; captionCharOffset?: number } {
 +    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
 +    return JSON.parse(this.doc.setTablePropertiesByPath(sec, parentPara, pathJson, JSON.stringify(props)));
 +  }
@@ -1511,7 +1511,7 @@ index 16342c689..1cd125fe6 100644
      StoredRowMissPolicy,
  };
 diff --git a/src/renderer/composer/line_breaking.rs b/src/renderer/composer/line_breaking.rs
-index 1c2b7cdc7..528703bf0 100755
+index 1c2b7cdc7..b9097e150 100755
 --- a/src/renderer/composer/line_breaking.rs
 +++ b/src/renderer/composer/line_breaking.rs
 @@ -956,7 +956,7 @@ fn prepare_paragraph_projection(
@@ -1523,7 +1523,28 @@ index 1c2b7cdc7..528703bf0 100755
                  italic: text_style.italic,
                  superscript: text_style.superscript,
                  subscript: text_style.subscript,
-@@ -2712,7 +2712,10 @@ fn inline_control_occupied_size_hwp(
+@@ -2679,7 +2679,7 @@ fn inline_control_size_hwp(ctrl: &Control) -> Option<(i32, i32)> {
+     }
+ }
+ 
+-/// 줄의 점유 상자는 표 본체와 바깥 여백을 함께 포함한다.
++/// 줄의 점유 상자는 표, 상하 캡션과 바깥 여백을 함께 포함한다.
+ /// 별도 줄의 너비 판정과 같은 줄의 높이 발행이 동일한 메트릭을 소비한다.
+ fn inline_control_occupied_size_hwp(
+     control: &Control,
+@@ -2693,10 +2693,7 @@ fn inline_control_occupied_size_hwp(
+         let measured = crate::renderer::height_measurer::HeightMeasurer::new(dpi)
+             .with_session_edited(true)
+             .measure_table(table, 0, 0, styles);
+-        height = height.max(px_to_hwpunit(
+-            measured.total_height - measured.caption_height,
+-            dpi,
+-        ));
++        height = height.max(px_to_hwpunit(measured.total_height, dpi));
+         width = width
+             .saturating_add(i32::from(table.outer_margin_left))
+             .saturating_add(i32::from(table.outer_margin_right));
+@@ -2712,7 +2709,10 @@ fn inline_control_occupied_size_hwp(
  /// 일반 경로는 표를 `control 배치 경로`에 두려고 제외하지만(#3211), 저장 줄이 없는 host 는
  /// 이 채움이 줄 경계의 유일한 소유자다. 표 폭을 안 실으면 줄에 남은 폭보다 넓은 표가
  /// 줄바꿈 없이 앞 글자 뒤에 붙는다(`distribution_doc.hwpx` 3쪽 — 표가 본문 오른쪽 밖으로 나간다).
@@ -1535,7 +1556,7 @@ index 1c2b7cdc7..528703bf0 100755
      let text_len = para.text.chars().count();
      let mut controls = flow_inline_controls(para);
      for (control, char_position) in para.controls.iter().zip(para.control_text_positions()) {
-@@ -2722,7 +2725,11 @@ fn flow_inline_controls_with_tac_tables(para: &Paragraph) -> Vec<FlowInlineContr
+@@ -2722,7 +2722,11 @@ fn flow_inline_controls_with_tac_tables(para: &Paragraph) -> Vec<FlowInlineContr
          if !table.common.treat_as_char || char_position >= text_len {
              continue;
          }
@@ -1548,7 +1569,7 @@ index 1c2b7cdc7..528703bf0 100755
              continue;
          };
          controls.push(FlowInlineControl {
-@@ -3227,7 +3234,7 @@ fn layout_paragraph_in_frame_impl(
+@@ -3227,7 +3231,7 @@ fn layout_paragraph_in_frame_impl(
      let inline_controls =
          if para.line_segs.is_empty() && supports_tac_table_band_frame_controls(para) {
              // [#7160] 저장 줄이 없는 TAC 표 host 는 표 폭까지 줄 경계 판정에 넣는다.
@@ -1557,7 +1578,7 @@ index 1c2b7cdc7..528703bf0 100755
          } else {
              flow_inline_controls(para)
          };
-@@ -4178,7 +4185,7 @@ pub(crate) fn reflow_line_segs(
+@@ -4178,7 +4182,7 @@ pub(crate) fn reflow_line_segs(
      styles: &ResolvedStyleSet,
      dpi: f64,
  ) {
@@ -1566,7 +1587,7 @@ index 1c2b7cdc7..528703bf0 100755
  }
  
  /// 셀 분할로 저장 폭이 stale해진 문단을 다시 조판한다.
-@@ -4193,7 +4200,7 @@ pub(crate) fn reflow_line_segs_after_cell_split(
+@@ -4193,7 +4197,7 @@ pub(crate) fn reflow_line_segs_after_cell_split(
      styles: &ResolvedStyleSet,
      dpi: f64,
  ) {
@@ -1575,7 +1596,7 @@ index 1c2b7cdc7..528703bf0 100755
  }
  
  /// 저장 LINE_SEG가 유효한 셀 텍스트 편집은 수정된 줄 이전의 경계를 그대로 둔다.
-@@ -4217,6 +4224,7 @@ pub(crate) fn reflow_line_segs_after_cell_text_edit(
+@@ -4217,6 +4221,7 @@ pub(crate) fn reflow_line_segs_after_cell_text_edit(
          Some(edit_char_offset),
          false,
          true,
@@ -1583,7 +1604,7 @@ index 1c2b7cdc7..528703bf0 100755
      )
  }
  
-@@ -4232,7 +4240,18 @@ pub(crate) fn reflow_line_segs_in_stored_section(
+@@ -4232,7 +4237,18 @@ pub(crate) fn reflow_line_segs_in_stored_section(
      styles: &ResolvedStyleSet,
      dpi: f64,
  ) {
@@ -1603,7 +1624,7 @@ index 1c2b7cdc7..528703bf0 100755
  }
  
  fn reflow_line_segs_impl(
-@@ -4243,6 +4262,7 @@ fn reflow_line_segs_impl(
+@@ -4243,6 +4259,7 @@ fn reflow_line_segs_impl(
      preserve_prefix_for_edit: Option<usize>,
      split_stale_cell_reflow: bool,
      object_line_font_basis: bool,
@@ -1611,7 +1632,7 @@ index 1c2b7cdc7..528703bf0 100755
  ) -> bool {
      // An impossible box publishes nothing, and this must be the first thing
      // that happens — before the memo invalidation below, which is already a
-@@ -4453,7 +4473,38 @@ fn reflow_line_segs_impl(
+@@ -4453,7 +4470,38 @@ fn reflow_line_segs_impl(
  
      let text_chars: Vec<char> = para.text.chars().collect();
      let text_len = text_chars.len();
@@ -1651,7 +1672,7 @@ index 1c2b7cdc7..528703bf0 100755
  
      // 문단 스타일에서 들여쓰기 및 줄 나눔 설정 조회 (들여쓰기는 목록 마커를 얹은 값)
      let para_style = styles.para_styles.get(para.para_shape_id as usize);
-@@ -4675,6 +4726,11 @@ fn reflow_line_segs_impl(
+@@ -4675,6 +4723,11 @@ fn reflow_line_segs_impl(
      let floating_anchors = floating_anchor_char_font_sizes(para, styles);
      let preserved_prefix_len = preserved_prefix.len();
      let mut new_line_segs: Vec<LineSeg> = preserved_prefix;
@@ -1663,7 +1684,7 @@ index 1c2b7cdc7..528703bf0 100755
      for (line_idx, lb) in line_breaks.iter().enumerate() {
          let utf16_start = if new_line_segs.is_empty() {
              0 // 첫 번째 줄의 text_start는 항상 0 (문단 시작)
-@@ -4736,6 +4792,9 @@ fn reflow_line_segs_impl(
+@@ -4736,6 +4789,9 @@ fn reflow_line_segs_impl(
  
      if forced_inline_line.is_none() && inline_controls.is_empty() {
          for &(position, _, height_hwp) in &occupied_controls {
@@ -2424,7 +2445,7 @@ index f50cde5..a8e4746 100644
              hwp3_variant: false,
              hft_ascii_halfwidth: false,
 diff --git a/src/renderer/layout/paragraph_layout.rs b/src/renderer/layout/paragraph_layout.rs
-index c585b32a6..d87cfd282 100755
+index c585b32a6..95489e929 100755
 --- a/src/renderer/layout/paragraph_layout.rs
 +++ b/src/renderer/layout/paragraph_layout.rs
 @@ -91,6 +91,65 @@ fn terminal_tracking_after_inline_picture(
@@ -3019,7 +3040,7 @@ index c585b32a6..d87cfd282 100755
              has_tabs,
              horizontal_shaping_initial_lane,
              is_last_line_of_para,
-@@ -7380,12 +7710,26 @@ impl LayoutEngine {
+@@ -7380,12 +7710,30 @@ impl LayoutEngine {
          // 문자 위치에 투영된다. composed.tac_controls를 문자 구간으로 다시 나누면
          // 다른 줄의 표가 소유자로 섞인다. caller가 복원한 저장 줄 배정과 마지막
          // run 끝 TAC를 포함한 공통 집합을 그대로 소비한다.
@@ -3028,11 +3049,15 @@ index c585b32a6..d87cfd282 100755
 +            let margins = hwpunit_to_px(table.outer_margin_top as i32, self.dpi)
 +                + hwpunit_to_px(table.outer_margin_bottom as i32, self.dpi);
 +            if cell_ctx.is_some() && (declared + margins - raw_lh).abs() > 0.2 {
-+                let measured = self.calc_nested_table_height(table, styles) - margins;
-+                // A reflowed host line reserves the measured table body. Align against
-+                // that same body so a stale declared height cannot push it into text.
-+                if (measured + margins - raw_lh).abs() <= 0.2 {
-+                    return measured;
++                let body = self.calc_nested_table_height(table, styles) - margins;
++                let whole_box = tac_object_box_height_px(body, &table.caption, self.dpi);
++                // Match the line's actual reserved frame, including a top/bottom
++                // caption when present. Do not infer a larger box from declared size.
++                if (whole_box + margins - raw_lh).abs() <= 0.2 {
++                    return whole_box;
++                }
++                if (body + margins - raw_lh).abs() <= 0.2 {
++                    return body;
 +                }
 +            }
 +            declared
@@ -3047,7 +3072,7 @@ index c585b32a6..d87cfd282 100755
                          let mt = hwpunit_to_px(table.outer_margin_top as i32, self.dpi);
                          let mb = hwpunit_to_px(table.outer_margin_bottom as i32, self.dpi);
                          ((mt > 0.0 || mb > 0.0)
-@@ -7434,7 +7778,19 @@ impl LayoutEngine {
+@@ -7434,7 +7782,19 @@ impl LayoutEngine {
              }
              counts
          };
@@ -3067,7 +3092,7 @@ index c585b32a6..d87cfd282 100755
              // 조판부호: 이 run 시작 위치 이전의 도형 마커를 먼저 삽입
              for (smi, (spos, stext)) in shape_markers.iter().enumerate() {
                  if !shape_marker_inserted[smi] && *spos <= run_char_pos {
-@@ -7790,6 +8146,14 @@ impl LayoutEngine {
+@@ -7790,6 +8150,14 @@ impl LayoutEngine {
                      exact_replay_eligible,
                  )
              };
@@ -3082,7 +3107,7 @@ index c585b32a6..d87cfd282 100755
              // 탭 리더 계산: 탭이 포함된 run에서 채움 기호 정보 추출
              // inline_tabs를 일시 제거하여 tab_stops 기반 위치 계산과 일관되게 함
              if has_tabs && run.text.contains('\t') {
-@@ -8634,7 +8998,7 @@ impl LayoutEngine {
+@@ -8634,7 +9002,7 @@ impl LayoutEngine {
                                  );
                              }
                              if t.common.treat_as_char && should_render_inline && !already_rendered {
@@ -3091,7 +3116,7 @@ index c585b32a6..d87cfd282 100755
                                  let om_top = hwpunit_to_px(t.outer_margin_top as i32, self.dpi);
                                  let om_bottom =
                                      hwpunit_to_px(t.outer_margin_bottom as i32, self.dpi);
-@@ -9742,7 +10106,7 @@ impl LayoutEngine {
+@@ -9742,7 +10110,7 @@ impl LayoutEngine {
          if empty_line_tac_allowed && !line_tac_offsets.is_empty() {
              if let (Some(p), Some(bdc)) = (para, bin_data_content) {
                  // TAC 이미지 전체 폭 계산 후 문단 정렬 적용
@@ -3100,7 +3125,7 @@ index c585b32a6..d87cfd282 100755
                  let align_offset = match vars.alignment {
                      Alignment::Center | Alignment::Distribute => {
                          (vars.available_width - total_tac_width).max(0.0) / 2.0
-@@ -9809,6 +10173,7 @@ impl LayoutEngine {
+@@ -9809,6 +10177,7 @@ impl LayoutEngine {
                                      .is_none()
                              {
                                  let om_l = hwpunit_to_px(t.outer_margin_left as i32, self.dpi);
@@ -3108,7 +3133,7 @@ index c585b32a6..d87cfd282 100755
                                  let om_top = hwpunit_to_px(t.outer_margin_top as i32, self.dpi);
                                  let table_x = img_x + om_l;
                                  let table_y = vars.y + om_top;
-@@ -9849,7 +10214,7 @@ impl LayoutEngine {
+@@ -9849,7 +10218,7 @@ impl LayoutEngine {
                                      table_x,
                                      table_y,
                                  );
@@ -3117,7 +3142,7 @@ index c585b32a6..d87cfd282 100755
                                  empty_line_mark_x = img_x;
                                  empty_line_logical_end += 1;
                              }
-@@ -10369,93 +10734,930 @@ pub(crate) struct ParaInlineState {
+@@ -10369,92 +10738,929 @@ pub(crate) struct ParaInlineState {
  }
  
  #[cfg(test)]
@@ -3391,7 +3416,6 @@ index c585b32a6..d87cfd282 100755
 -    #[test]
 -    fn split_label_assigns_positive_slack_to_interior_spaces() {
 -        let line = split_label_line();
--        let (extra_word, extra_char, extra_dash) = compute_line_extra_spacing(
 +        let line_count = lines.len();
 +        let composed = ComposedParagraph {
 +            lines,
@@ -4118,11 +4142,10 @@ index c585b32a6..d87cfd282 100755
 +    #[test]
 +    fn split_label_assigns_positive_slack_to_interior_spaces() {
 +        let line = split_label_line();
-+        let (extra_word, extra_char, extra_dash) = compute_line_extra_spacing(
+         let (extra_word, extra_char, extra_dash) = compute_line_extra_spacing(
              &line,
              usize::MAX,
-             &ResolvedStyleSet::default(),
-@@ -10468,10 +11670,12 @@ mod issue_2809_split_alignment_tests {
+@@ -10468,10 +11674,12 @@ mod issue_2809_split_alignment_tests {
              false,
              false,
              false,
@@ -4135,7 +4158,7 @@ index c585b32a6..d87cfd282 100755
          );
  
          assert!((extra_word - 30.0).abs() < 0.001);
-@@ -10505,10 +11709,12 @@ mod issue_2809_split_alignment_tests {
+@@ -10505,10 +11713,12 @@ mod issue_2809_split_alignment_tests {
              true,
              false,
              false,
@@ -4148,7 +4171,7 @@ index c585b32a6..d87cfd282 100755
          );
          let mut distributed_style = text_style;
          distributed_style.extra_word_spacing = extra_word;
-@@ -10545,10 +11751,12 @@ mod issue_2809_split_alignment_tests {
+@@ -10545,10 +11755,12 @@ mod issue_2809_split_alignment_tests {
              false,
              false,
              false,
@@ -4161,7 +4184,7 @@ index c585b32a6..d87cfd282 100755
          );
  
          let mut distributed_style = text_style.clone();
-@@ -10595,10 +11803,12 @@ mod issue_2809_split_alignment_tests {
+@@ -10595,10 +11807,12 @@ mod issue_2809_split_alignment_tests {
              false,
              false,
              false,
@@ -4174,7 +4197,7 @@ index c585b32a6..d87cfd282 100755
          );
          assert_eq!(extra_word, 0.0);
          assert_eq!(extra_char, 0.0);
-@@ -10618,10 +11828,12 @@ mod issue_2809_split_alignment_tests {
+@@ -10618,10 +11832,12 @@ mod issue_2809_split_alignment_tests {
              false,
              false,
              false,
@@ -4187,7 +4210,7 @@ index c585b32a6..d87cfd282 100755
          );
          assert!(extra_char_mid > 0.0);
      }
-@@ -10665,10 +11877,12 @@ mod issue_4657_distribute_alignment_tests {
+@@ -10665,10 +11881,12 @@ mod issue_4657_distribute_alignment_tests {
              false,
              false,
              false,
@@ -4200,7 +4223,7 @@ index c585b32a6..d87cfd282 100755
          );
          assert_eq!(extra_word, 0.0);
          assert_eq!(extra_dash, 0.0);
-@@ -11262,3 +12476,191 @@ mod pua_mapping_tests {
+@@ -11262,3 +12480,191 @@ mod pua_mapping_tests {
          assert_eq!(map_pua_bullet_char('\u{F00CF}'), '\u{F00CF}');
      }
  }
@@ -4467,10 +4490,54 @@ index 06ac2fa..e69b722 100644
              let mut inline_x = match para_alignment {
                  Alignment::Center | Alignment::Distribute => {
 diff --git a/src/renderer/layout/table_layout.rs b/src/renderer/layout/table_layout.rs
-index 5360444..43436e0 100644
+index 536044424..0b89e57d4 100644
 --- a/src/renderer/layout/table_layout.rs
 +++ b/src/renderer/layout/table_layout.rs
-@@ -5338,7 +5338,12 @@ impl LayoutEngine {
+@@ -3659,25 +3659,26 @@ impl LayoutEngine {
+                         (cx, cw, cy)
+                     }
+                 };
+-                let cap_cell_ctx = table_meta
+-                    .map(|(pi, ci)| CellContext {
+-                        in_textbox: false,
+-                        parent_para_index: pi,
+-                        path: vec![CellPathEntry {
+-                            control_index: ci,
+-                            cell_index: 65534, // 캡션 식별 센티널
+-                            cell_para_index: 0,
+-                            text_direction: 0,
+-                        }],
++                let cap_cell_ctx = enclosing_cell_ctx
++                    .as_ref()
++                    .map(|ctx| {
++                        let mut cc = ctx.clone();
++                        if let Some(last) = cc.path.last_mut() {
++                            last.cell_index = 65534;
++                            last.cell_para_index = 0;
++                        }
++                        cc
+                     })
+                     .or_else(|| {
+-                        enclosing_cell_ctx.as_ref().map(|ctx| {
+-                            let mut cc = ctx.clone();
+-                            if let Some(last) = cc.path.last_mut() {
+-                                last.cell_index = 65534;
+-                                last.cell_para_index = 0;
+-                            }
+-                            cc
++                        table_meta.map(|(pi, ci)| CellContext {
++                            in_textbox: false,
++                            parent_para_index: pi,
++                            path: vec![CellPathEntry {
++                                control_index: ci,
++                                cell_index: 65534, // 캡션 식별 센티널
++                                cell_para_index: 0,
++                                text_direction: 0,
++                            }],
+                         })
+                     });
+                 self.layout_caption(
+@@ -5338,7 +5339,12 @@ impl LayoutEngine {
              // 중첩 표: outer_margin_left 적용 + host_alignment에 따라 셀 내에서 정렬
              let om_left = hwpunit_to_px(table.outer_margin_left as i32, self.dpi);
              let area_x = col_area.x + om_left;
@@ -4484,7 +4551,7 @@ index 5360444..43436e0 100644
              // 글 앞/뒤 표는 셀의 텍스트 흐름과 별개인 부동 개체다. 자리차지
              // 표의 가운데 배치 호환 규칙을 적용하면 명시한 LEFT/RIGHT 앵커가
              // 사라진다. 한컴 PDF에서도 문단 기준 LEFT/offset=0은 셀 왼끝이다.
-@@ -21021,6 +21026,62 @@ impl LayoutEngine {
+@@ -21021,6 +21027,62 @@ impl LayoutEngine {
      }
  }
  
@@ -7719,7 +7786,7 @@ index dffc08cd0..7e8bd19b5 100644
      this.countInput.min = '1';
      this.countInput.max = String(MAX_INSERT_COUNT);
 diff --git a/rhwp-studio/src/command/commands/table.ts b/rhwp-studio/src/command/commands/table.ts
-index c6de9bdb5..150304835 100644
+index c6de9bdb5..7ac621c72 100644
 --- a/rhwp-studio/src/command/commands/table.ts
 +++ b/rhwp-studio/src/command/commands/table.ts
 @@ -1,4 +1,5 @@
@@ -8421,8 +8488,83 @@ index c6de9bdb5..150304835 100644
      },
    },
    {
+@@ -927,42 +793,41 @@ export const tableCommands: CommandDef[] = [
+     execute(services) {
+       const ih = services.getInputHandler();
+       if (!ih) return;
+-      // 표 참조 획득 (표 객체 선택 또는 셀 내부)
+-      let sec: number, ppi: number, ci: number;
+       const ref = ih.getSelectedTableRef();
+-      if (ref) {
+-        sec = ref.sec; ppi = ref.ppi; ci = ref.ci;
+-      } else {
+-        const pos = ih.getCursorPosition();
+-        if (pos.parentParaIndex === undefined || pos.controlIndex === undefined) return;
+-        sec = pos.sectionIndex; ppi = pos.parentParaIndex; ci = pos.controlIndex;
+-      }
+-      // 현재 캡션 상태 조회
+-      let props: any;
+-      try { props = services.wasm.getTableProperties(sec, ppi, ci); } catch { return; }
+-      if (!props) return;
++      const pos = ih.getCursorPosition();
++      const sec = ref?.sec ?? pos.sectionIndex;
++      const ppi = ref?.ppi ?? pos.parentParaIndex;
++      const ci = ref?.ci ?? pos.controlIndex;
++      if (ppi === undefined || ci === undefined) return;
++      const path = (ref?.cellPath ?? pos.cellPath ?? [{ controlIndex: ci, cellIndex: pos.cellIndex ?? 0, cellParaIndex: pos.cellParaIndex ?? 0 }]).map(entry => ({ ...entry }));
++      const pathJson = JSON.stringify(path);
++      const captionPath = path.map((entry, index) => ({ ...entry, cellIndex: index === path.length - 1 ? 65534 : entry.cellIndex, cellParaIndex: index === path.length - 1 ? 0 : entry.cellParaIndex }));
++      const first = captionPath[0];
++      const captionPosition: DocumentPosition = { sectionIndex: sec, paragraphIndex: 0, charOffset: 0, parentParaIndex: ppi, controlIndex: first.controlIndex, cellIndex: first.cellIndex, cellParaIndex: first.cellParaIndex, cellPath: captionPath };
+       let charOffset = 0;
+-      if (!props.hasCaption) {
+-        safeTableOp(() => ih.executeOperation({
+-          kind: 'snapshot',
+-          operationType: 'toggleTableCaption',
+-          operation: (wasm) => {
+-            const result: any = wasm.setTableProperties(sec, ppi, ci, { hasCaption: true });
+-            charOffset = result?.captionCharOffset ?? 3;
+-            return { sectionIndex: sec, paragraphIndex: ppi, charOffset: 0 };
+-          },
+-        }), '캡션 넣기');
+-      } else {
+-        try {
+-          const len = services.wasm.getCellParagraphLength(sec, ppi, ci, 65534, 0);
+-          charOffset = len;
+-        } catch { charOffset = 0; }
+-      }
+-      // 표 내부 편집 모드 종료 후 캡션 편집 진입
+-      if (ref) {
+-        ih.exitTableObjectSelection();
++      try {
++        const props = services.wasm.getTablePropertiesByPath(sec, ppi, pathJson);
++        if (!props.hasCaption) {
++          ih.executeOperation({
++            kind: 'snapshot',
++            operationType: 'toggleTableCaption',
++            operation: (wasm) => {
++              const result = wasm.setTablePropertiesByPath(sec, ppi, pathJson, { hasCaption: true });
++              if (!result.ok) throw new Error('캡션을 만들지 못했습니다');
++              charOffset = result.captionCharOffset ?? 3;
++              ih.clearTextSelection();
++              return { ...captionPosition, charOffset };
++            },
++          });
++        } else {
++          charOffset = services.wasm.getCellParagraphLengthByPath(sec, ppi, JSON.stringify(captionPath));
++        }
++      } catch (error) {
++        console.error('[table] 캡션 넣기 실패:', error);
++        return;
+       }
+-      ih.enterTableCaptionEditing(sec, ppi, ci, charOffset);
++      if (ref) ih.exitTableObjectSelection();
++      ih.enterTableCaptionEditing(sec, ppi, ci, charOffset, path);
+     },
+   },
+   {
 diff --git a/rhwp-studio/src/engine/input-handler.ts b/rhwp-studio/src/engine/input-handler.ts
-index 043ee77ee..773430814 100644
+index 043ee77ee..f8a7eaef8 100644
 --- a/rhwp-studio/src/engine/input-handler.ts
 +++ b/rhwp-studio/src/engine/input-handler.ts
 @@ -19,6 +19,7 @@ import { VirtualScroll } from '@/view/virtual-scroll';
@@ -8444,7 +8586,36 @@ index 043ee77ee..773430814 100644
      startPageX: number;
      startPageY: number;
      lastPageX: number;
-@@ -4859,6 +4861,8 @@ export class InputHandler {
+@@ -4831,16 +4833,24 @@ export class InputHandler {
+   }
+ 
+   /** 표 캡션 텍스트 편집 모드 진입 (cellIndex=65534로 캡션 구분) */
+-  enterTableCaptionEditing(sec: number, ppi: number, ci: number, charOffset = 0): void {
++  enterTableCaptionEditing(sec: number, ppi: number, ci: number, charOffset = 0, path?: CellPathEntry[]): void {
++    const captionPath = (path ?? [{ controlIndex: ci, cellIndex: 0, cellParaIndex: 0 }]).map((entry, index, entries) => ({
++      ...entry,
++      cellIndex: index === entries.length - 1 ? 65534 : entry.cellIndex,
++      cellParaIndex: index === entries.length - 1 ? 0 : entry.cellParaIndex,
++    }));
++    const first = captionPath[0];
+     this.cursor.clearSelection();
++    this.selectionRenderer.clear();
+     this.cursor.moveTo({
+       sectionIndex: sec,
+       paragraphIndex: 0,
+       charOffset,
+       parentParaIndex: ppi,
+-      controlIndex: ci,
+-      cellIndex: 65534,
+-      cellParaIndex: 0,
++      controlIndex: first.controlIndex,
++      cellIndex: first.cellIndex,
++      cellParaIndex: first.cellParaIndex,
++      cellPath: captionPath,
+     });
+     this.cursor.resetPreferredX();
+     this.updateCaret();
+@@ -4859,6 +4869,8 @@ export class InputHandler {
    /** 현재 커서 위치를 반환한다 */
    getCursorPosition(): DocumentPosition { return this.cursor.getPosition(); }
  
@@ -8453,7 +8624,7 @@ index 043ee77ee..773430814 100644
    /** 별도 좌표계·개체 선택을 본문 링크 편집으로 오인하지 않도록 명시적으로 차단한다. */
    canEditHyperlink(): boolean {
      return !this.cursor.isInHeaderFooter() && !this.cursor.isInFootnote()
-@@ -5476,7 +5480,7 @@ export class InputHandler {
+@@ -5476,7 +5488,7 @@ export class InputHandler {
    performRedo(): void { this.handleRedo(); }
  
    /** 복사 (커맨드 시스템용 — 컨텍스트 메뉴/도구 상자에서 호출) */
@@ -8462,7 +8633,7 @@ index 043ee77ee..773430814 100644
      // 개체 선택 모드 → 직접 클립보드 기록 (textarea 포커스 불필요)
      if (this.cursor.isInPictureObjectSelection()) {
        const ref = this.cursor.getSelectedPictureRef();
-@@ -5495,11 +5499,12 @@ export class InputHandler {
+@@ -5495,11 +5507,12 @@ export class InputHandler {
              _keyboard.writeTextHtmlToClipboard(text, markedHtml)
                .catch(() => navigator.clipboard.writeText(text).catch(() => {}));
            }
@@ -8476,7 +8647,7 @@ index 043ee77ee..773430814 100644
      }
      if (this.cursor.isInTableObjectSelection()) {
        const ref = this.cursor.getSelectedTableRef();
-@@ -5519,15 +5524,16 @@ export class InputHandler {
+@@ -5519,15 +5532,16 @@ export class InputHandler {
            const markedHtml = _keyboard.prepareRhwpInternalClipboardHtml(this, html, text);
            _keyboard.writeTextHtmlToClipboard(text, markedHtml)
              .catch(() => navigator.clipboard.writeText(text).catch(() => {}));
@@ -8495,7 +8666,7 @@ index 043ee77ee..773430814 100644
    }
  
    /** 붙이기 (커맨드 시스템용 — 컨텍스트 메뉴/도구 상자에서 호출) */
-@@ -5568,9 +5574,11 @@ export class InputHandler {
+@@ -5568,9 +5582,11 @@ export class InputHandler {
      if (this.cursor.isInTableObjectSelection()) {
        const ref = this.cursor.getSelectedTableRef();
        if (ref) {
@@ -8510,7 +8681,7 @@ index 043ee77ee..773430814 100644
          this.cursor.moveOutOfSelectedTable();
          this.eventBus.emit('table-object-selection-changed', false);
          this.executeOperation({ kind: 'snapshot', operationType: 'cutTable', operation: (wasm: WasmBridge) => {
-@@ -5604,18 +5612,7 @@ export class InputHandler {
+@@ -5604,18 +5620,7 @@ export class InputHandler {
      if (this.cursor.isInTableObjectSelection()) {
        const ref = this.cursor.getSelectedTableRef();
        if (!ref) return;
@@ -8530,7 +8701,7 @@ index 043ee77ee..773430814 100644
        return;
      }
      if (this.cursor.hasSelection()) {
-@@ -5623,6 +5620,44 @@ export class InputHandler {
+@@ -5623,6 +5628,44 @@ export class InputHandler {
      }
    }
  
@@ -8948,7 +9119,7 @@ index 609d0525d..2fff61ba4 100644
          // 이동 규칙도 대화상자와 공유한다(셀 매치는 셀 좌표로 간다).
          navigateToSearchHit(ih, result);
 diff --git a/src/document_core/commands/table_ops.rs b/src/document_core/commands/table_ops.rs
-index 7c31daa4c..45bd0e60c 100644
+index 7c31daa4c..78620793d 100644
 --- a/src/document_core/commands/table_ops.rs
 +++ b/src/document_core/commands/table_ops.rs
 @@ -42,6 +42,395 @@ struct CellResizeUpdate {
@@ -10703,7 +10874,24 @@ index 7c31daa4c..45bd0e60c 100644
  
          if let Some(v) = json_i16(json, "cellSpacing") {
              table.cell_spacing = v;
-@@ -3105,7 +3671,7 @@ impl DocumentCore {
+@@ -3019,11 +3585,13 @@ impl DocumentCore {
+                 };
+                 let mut cap_para = crate::model::paragraph::Paragraph::new_empty();
+                 // 한컴 표 캡션은 AutoNumber 앞에 "표" 접두어를 함께 표시한다.
+-                cap_para.text = "표  ".to_string();
+-                cap_para.char_count = 13;
++                // Include the auto-number placeholder and its trailing space.
++                // An eight-unit control starts at offset 2, so the space is at 10.
++                cap_para.text = "표   ".to_string();
++                cap_para.char_count = 12;
+                 cap_para.char_count_msb = true;
+                 cap_para.control_mask = 1u32 << 0x12;
+-                cap_para.char_offsets = vec![0, 1, 2, 11];
++                cap_para.char_offsets = vec![0, 1, 2, 10];
+                 cap_para.style_id = caption_style_id;
+                 cap_para.para_shape_id = caption_para_shape_id;
+                 cap_para.char_shapes = vec![crate::model::paragraph::CharShapeRef {
+@@ -3105,7 +3673,7 @@ impl DocumentCore {
              || json.contains("\"centerLine\"");
          if has_border_fill_change {
              let new_bf_id = self.create_border_fill_from_json(json);
@@ -10712,7 +10900,7 @@ index 7c31daa4c..45bd0e60c 100644
              table.border_fill_id = new_bf_id;
              for cell in &mut table.cells {
                  cell.border_fill_id = new_bf_id;
-@@ -3116,44 +3682,61 @@ impl DocumentCore {
+@@ -3116,44 +3684,61 @@ impl DocumentCore {
          // 중간 표 캡션 삭제 시 남은 표 번호가 한컴처럼 1부터 이어지도록 보장한다.
          if caption_created || caption_changed {
              crate::parser::assign_auto_numbers(&mut self.document);
@@ -10863,7 +11051,7 @@ index 42295aa6d..aa3178337 100644
                  section,
                  para,
 diff --git a/src/document_core/commands/text_editing.rs b/src/document_core/commands/text_editing.rs
-index 9f6f809d7..2ab8692ed 100644
+index 9f6f809d7..ed88065c3 100644
 --- a/src/document_core/commands/text_editing.rs
 +++ b/src/document_core/commands/text_editing.rs
 @@ -16,7 +16,8 @@ use crate::model::paragraph::{LineSeg, ParaMeta, Paragraph};
@@ -10876,7 +11064,23 @@ index 9f6f809d7..2ab8692ed 100644
  };
  use crate::renderer::page_layout::PageLayoutInfo;
  use crate::renderer::pagination::PageItem;
-@@ -3230,7 +3231,14 @@ impl DocumentCore {
+@@ -3181,7 +3182,14 @@ impl DocumentCore {
+                 return Self::cell_metrics_for_control(control, cell_idx);
+             }
+             para = match control {
+-                Control::Table(t) => t.cells.get(cell_idx)?.paragraphs.get(cell_para_idx)?,
++                Control::Table(t) => {
++                    let paragraphs = if cell_idx == super::super::TABLE_CAPTION_CELL_SENTINEL {
++                        &t.caption.as_ref()?.paragraphs
++                    } else {
++                        &t.cells.get(cell_idx)?.paragraphs
++                    };
++                    paragraphs.get(cell_para_idx)?
++                }
+                 Control::Shape(s) => super::super::helpers::get_textbox_from_shape(s)?
+                     .paragraphs
+                     .get(cell_para_idx)?,
+@@ -3230,7 +3238,14 @@ impl DocumentCore {
          let margin_right = para_style.map(|s| s.margin_right).unwrap_or(0.0);
          let final_width = (available_width - margin_left - margin_right).max(0.0);
          // 셀 내용 상자 — 열이 없으므로 미스냅.
@@ -10892,7 +11096,27 @@ index 9f6f809d7..2ab8692ed 100644
              cell_para,
              ParagraphBox::content_width_px(final_width, dpi),
              &styles,
-@@ -5861,6 +5869,7 @@ impl DocumentCore {
+@@ -5721,10 +5736,15 @@ impl DocumentCore {
+             let is_last = i == path.len() - 1;
+             let paragraphs = match para.controls.get_mut(ctrl_idx) {
+                 Some(Control::Table(t)) => {
+-                    let cell = t.cells.get_mut(cell_idx).ok_or_else(|| {
+-                        HwpError::RenderError(format!("경로[{}]: 셀 {} 범위 초과", i, cell_idx))
+-                    })?;
+-                    &mut cell.paragraphs
++                    if cell_idx == super::super::TABLE_CAPTION_CELL_SENTINEL {
++                        &mut t.caption.as_mut().ok_or_else(|| {
++                            HwpError::RenderError(format!("경로[{}]: 표에 캡션이 없습니다", i))
++                        })?.paragraphs
++                    } else {
++                        &mut t.cells.get_mut(cell_idx).ok_or_else(|| {
++                            HwpError::RenderError(format!("경로[{}]: 셀 {} 범위 초과", i, cell_idx))
++                        })?.paragraphs
++                    }
+                 }
+                 Some(Control::Shape(shape)) => {
+                     if cell_idx != 0 {
+@@ -5861,6 +5881,7 @@ impl DocumentCore {
          );
  
          // 최외곽 표 dirty 마킹
@@ -10900,7 +11124,7 @@ index 9f6f809d7..2ab8692ed 100644
          let outer_ctrl = path[0].0;
          self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
  
-@@ -5922,6 +5931,7 @@ impl DocumentCore {
+@@ -5922,6 +5943,7 @@ impl DocumentCore {
              None,
          );
  
@@ -10908,7 +11132,7 @@ index 9f6f809d7..2ab8692ed 100644
          let outer_ctrl = path[0].0;
          self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
          self.document.sections[section_idx].raw_stream = None;
-@@ -6000,6 +6010,7 @@ impl DocumentCore {
+@@ -6000,6 +6022,7 @@ impl DocumentCore {
          self.reflow_cell_paragraph_by_path(section_idx, parent_para_idx, path, start_para);
  
          // dirty/이벤트는 delete_text_in_cell_by_path 와 동형(최외곽 컨트롤 기준).
@@ -10916,7 +11140,7 @@ index 9f6f809d7..2ab8692ed 100644
          let outer_ctrl = path[0].0;
          self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
          self.document.sections[section_idx].raw_stream = None;
-@@ -6102,6 +6113,7 @@ impl DocumentCore {
+@@ -6102,6 +6125,7 @@ impl DocumentCore {
              Some(cell_para_idx + 1),
          );
  
@@ -10924,7 +11148,7 @@ index 9f6f809d7..2ab8692ed 100644
          let outer_ctrl = path[0].0;
          self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
          self.document.sections[section_idx].raw_stream = None;
-@@ -6205,6 +6217,7 @@ impl DocumentCore {
+@@ -6205,6 +6229,7 @@ impl DocumentCore {
              None,
          );
  
@@ -11317,3 +11541,61 @@ index 133757d01..4a177f571 100644
          // 글줄은 구성 결과와 저장 줄이 같을 때만 이 원점을 소비한다.
          // 글줄이 없는 개체 앵커는 아래에서 같은 저장 프레임 원점을 직접 쓴다.
          let source_text_origin = source_host_origin.filter(|_| {
+diff --git a/src/document_core/queries/cursor_nav.rs b/src/document_core/queries/cursor_nav.rs
+index 930af00d7..5c29d80ac 100644
+--- a/src/document_core/queries/cursor_nav.rs
++++ b/src/document_core/queries/cursor_nav.rs
+@@ -4,7 +4,7 @@ use super::super::helpers::{
+     find_logical_control_positions, get_textbox_from_shape, has_table_control,
+     is_treat_as_char_object_control, navigable_text_len, utf16_pos_to_char_idx, LineInfoResult,
+ };
+-use crate::document_core::DocumentCore;
++use crate::document_core::{DocumentCore, TABLE_CAPTION_CELL_SENTINEL};
+ use crate::error::HwpError;
+ use crate::model::control::Control;
+ use crate::model::paragraph::Paragraph;
+@@ -812,6 +812,15 @@ impl DocumentCore {
+         for (i, &(ctrl_idx, cell_idx, cell_para_idx)) in path.iter().enumerate() {
+             let next_para = match para.controls.get(ctrl_idx) {
+                 Some(Control::Table(table)) => {
++                    if cell_idx == TABLE_CAPTION_CELL_SENTINEL {
++                        let caption = table.caption.as_ref().ok_or_else(|| {
++                            HwpError::RenderError(format!("경로[{}]: 표에 캡션이 없습니다", i))
++                        })?;
++                        para = caption.paragraphs.get(cell_para_idx).ok_or_else(|| {
++                            HwpError::RenderError(format!("경로[{}]: 캡션문단 {} 범위 초과", i, cell_para_idx))
++                        })?;
++                        continue;
++                    }
+                     let cell = table.cells.get(cell_idx).ok_or_else(|| {
+                         HwpError::RenderError(format!(
+                             "경로[{}]: 셀 {} 범위 초과 (총 {}개)",
+@@ -936,6 +945,15 @@ impl DocumentCore {
+         for (i, &(ctrl_idx, cell_idx, cell_para_idx)) in path[..path.len() - 1].iter().enumerate() {
+             let next_para = match para.controls.get(ctrl_idx) {
+                 Some(Control::Table(table)) => {
++                    if cell_idx == TABLE_CAPTION_CELL_SENTINEL {
++                        let caption = table.caption.as_ref().ok_or_else(|| {
++                            HwpError::RenderError(format!("경로[{}]: 표에 캡션이 없습니다", i))
++                        })?;
++                        para = caption.paragraphs.get(cell_para_idx).ok_or_else(|| {
++                            HwpError::RenderError(format!("경로[{}]: 캡션문단 {} 범위 초과", i, cell_para_idx))
++                        })?;
++                        continue;
++                    }
+                     let cell = table.cells.get(cell_idx).ok_or_else(|| {
+                         HwpError::RenderError(format!("경로[{}]: 셀 {} 범위 초과", i, cell_idx))
+                     })?;
+@@ -991,6 +1009,12 @@ impl DocumentCore {
+         let last = path.last().unwrap();
+         match para.controls.get(last.0) {
+             Some(Control::Table(table)) => {
++                if last.1 == TABLE_CAPTION_CELL_SENTINEL {
++                    let caption = table.caption.as_ref().ok_or_else(|| {
++                        HwpError::RenderError("표에 캡션이 없습니다".to_string())
++                    })?;
++                    return Ok(caption.paragraphs.len());
++                }
+                 let cell = table
+                     .cells
+                     .get(last.1)

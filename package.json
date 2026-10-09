@@ -19,6 +19,7 @@
     "test:nested": "node tests/nested-browser.mjs",
     "test:table-split": "node tests/table-split-browser.mjs",
     "test:table-object": "node tests/table-object-browser.mjs",
-    "test:table-move": "node tests/table-move-browser.mjs"
+    "test:table-move": "node tests/table-move-browser.mjs",
+    "test:table-caption": "node tests/table-caption-browser.mjs"
   }
 }
