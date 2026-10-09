@@ -7153,7 +7153,7 @@ index 2f0b5ae..0fb0243 100644
          w,
          "hh:breakSetting",
 diff --git a/src/wasm_api.rs b/src/wasm_api.rs
-index 2031085e3..346359f42 100644
+index 2031085e3..32ab40f3a 100644
 --- a/src/wasm_api.rs
 +++ b/src/wasm_api.rs
 @@ -189,6 +189,11 @@ fn render_page_to_canvas_filtered_with_profile_impl(
@@ -7629,6 +7629,21 @@ index 2031085e3..346359f42 100644
              )
              .map_err(|e| e.into())
      }
+@@ -6082,8 +6410,12 @@ impl HwpDocument {
+ 
+     /// 문서 글 전체 — `GetTextFile("UNICODE")`. 원문 Unicode JSON 문자열이다.
+     #[wasm_bindgen(js_name = getTextFileUnicode)]
+-    pub fn get_text_file_unicode(&self) -> String {
+-        self.text_file_unicode_json()
++    pub fn get_text_file_unicode(&self, include_table_captions: Option<bool>) -> String {
++        if include_table_captions.unwrap_or(false) {
++            self.text_file_unicode_with_table_captions_json()
++        } else {
++            self.text_file_unicode_json()
++        }
+     }
+ 
+     /// 문서 글을 한글 스캔 차례로 — `InitScan`·`GetText`·`ReleaseScan` 이 쓴다.
 diff --git a/Cargo.toml b/Cargo.toml
 index a00248c..c98733e 100644
 --- a/Cargo.toml
@@ -11606,3 +11621,64 @@ index 930af00d7..5c29d80ac 100644
                  let cell = table
                      .cells
                      .get(last.1)
+diff --git a/src/document_core/queries/hwpctrl_sets.rs b/src/document_core/queries/hwpctrl_sets.rs
+index ce65f5725..8a7f48be7 100644
+--- a/src/document_core/queries/hwpctrl_sets.rs
++++ b/src/document_core/queries/hwpctrl_sets.rs
+@@ -756,6 +756,41 @@ impl DocumentCore {
+         json_escape(&self.text_file_content())
+     }
+ 
++    /// Local inspection includes table captions without changing the legacy scan contract.
++    pub fn text_file_unicode_with_table_captions_json(&self) -> String {
++        fn append_captions(paragraphs: &[Paragraph], out: &mut String) {
++            for paragraph in paragraphs {
++                for control in &paragraph.controls {
++                    match control {
++                        Control::Table(table) => {
++                            for cell in &table.cells {
++                                append_captions(&cell.paragraphs, out);
++                            }
++                            if let Some(caption) = &table.caption {
++                                for paragraph in &caption.paragraphs {
++                                    out.push_str("\r\n");
++                                    out.push_str(&paragraph.text);
++                                }
++                                append_captions(&caption.paragraphs, out);
++                            }
++                        }
++                        Control::Shape(shape) => {
++                            for (_, paragraphs) in shape_lists(shape) {
++                                append_captions(paragraphs, out);
++                            }
++                        }
++                        _ => {}
++                    }
++                }
++            }
++        }
++        let mut text = self.text_file_content();
++        for section in &self.document.sections {
++            append_captions(&section.paragraphs, &mut text);
++        }
++        json_escape(&text)
++    }
++
+     /// 컨트롤 하나를 지운다 — 웹한글컨트롤 `DeleteCtrl`.
+     ///
+     /// 자리는 컨트롤 사슬이 준 `(list, para, controlIndex)` 다. 본문만 다룬다 — 셀·글상자 안의
+diff --git a/npm/hwpctrl-ocx/src/index.mjs b/npm/hwpctrl-ocx/src/index.mjs
+index 77fa2c31f..c4623e935 100644
+--- a/npm/hwpctrl-ocx/src/index.mjs
++++ b/npm/hwpctrl-ocx/src/index.mjs
+@@ -1278,6 +1278,10 @@ export class HwpCtrl {
+   GetTextFile(format, option) {
+     if (String(option ?? '').includes('saveblock') && !this.#selection) return null;
+     if (String(format ?? '').trim().toUpperCase() === 'UNICODE') {
++      // Local inspection opts in; ordinary GetTextFile callers retain the scan contract.
++      if (option === 'includeTableCaptions') {
++        return parseJson(this.#doc?.getTextFileUnicode?.(true) ?? '""', '');
++      }
+       return parseJson(this.#doc?.getTextFileUnicode?.() ?? '""', '');
+     }
+     // 이어 붙이기는 코어가 한다. 코어는 COM 실측대로 CP949 밖 글자를 `&#N;` 로 escape

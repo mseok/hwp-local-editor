@@ -300,7 +300,7 @@ try {
     }
   });
   async function currentText() {
-    const value = await studio.hwpctrl.call('GetTextFile',['UNICODE','']);
+    const value = await studio.hwpctrl.call('GetTextFile',['UNICODE','includeTableCaptions']);
     return typeof value === 'string' ? value : JSON.stringify(value);
   }
   readTextButton.addEventListener('click',async()=>{

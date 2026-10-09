@@ -20,7 +20,7 @@ async function inspect(bytes) {
   let exported;
   try {
     document = new engine.HwpDocument(bytes);
-    const text = JSON.parse(document.getTextFileUnicode());
+    const text = JSON.parse(document.getTextFileUnicode(true));
     const format = document.getSourceFormat();
     exported = format === 'hwpx' ? document.exportHwpxWithReport() : document.exportHwpWithReport();
     return {format,pageCount:document.pageCount(),textSha256:digest(typeof text === 'string' ? text : JSON.stringify(text)),contentLoss:JSON.parse(exported.contentLoss())};
