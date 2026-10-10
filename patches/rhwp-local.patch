@@ -13813,7 +13813,7 @@ index d4d46931d..9d28845af 100644
                          return tr.cell_context.as_ref().map_or(false, |ctx| {
                              ctx.parent_para_index == parent_para
 diff --git a/rhwp-studio/src/ui/picture-props-dialog.ts b/rhwp-studio/src/ui/picture-props-dialog.ts
-index 0f3466ce9..31db0a448 100644
+index 0f3466ce9..e3d60feef 100644
 --- a/rhwp-studio/src/ui/picture-props-dialog.ts
 +++ b/rhwp-studio/src/ui/picture-props-dialog.ts
 @@ -457,6 +457,7 @@ export class PicturePropsDialog {
@@ -13906,6 +13906,18 @@ index 0f3466ce9..31db0a448 100644
      rRow.appendChild(this.tbMarginBottomInput);
      rRow.appendChild(this.unit('mm'));
      marginFs.appendChild(rRow);
+@@ -1296,9 +1308,11 @@ export class PicturePropsDialog {
+     const vaIcons = ['⬆', '⬌', '⬇'];
+     const vaTitles = [i18nText('dialog.pictureProps.buildTextboxPanel.label'), i18nText('dialog.pictureProps.buildTextboxPanel.label.x55b22e'), i18nText('dialog.pictureProps.buildTextboxPanel.label.x313c9d')];
+     const vaValues = ['Top', 'Center', 'Bottom'];
++    const vaNames = ['글상자 세로 위 정렬', '글상자 세로 가운데 정렬', '글상자 세로 아래 정렬'];
+     vaTitles.forEach((title, i) => {
+       const btn = document.createElement('button');
+       btn.className = 'pp-wrap-btn pp-valign-btn';
++      btn.setAttribute('aria-label', vaNames[i]);
+       btn.textContent = vaIcons[i];
+       btn.title = title;
+       btn.dataset.value = vaValues[i];
 diff --git a/rhwp-studio/src/ui/equation-editor-dialog.ts b/rhwp-studio/src/ui/equation-editor-dialog.ts
 index 92f2d96e4..5543d585b 100644
 --- a/rhwp-studio/src/ui/equation-editor-dialog.ts

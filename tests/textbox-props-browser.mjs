@@ -54,7 +54,7 @@ async function selectBox(frame, source) {
   assert((await frame.locator('.table-object-layer > div').count()) >= 8, 'The text box must be selected');
 }
 const colorRef = hex => {const v = hex.replace('#', ''); return (parseInt(v.slice(4, 6), 16) << 16) | (parseInt(v.slice(2, 4), 16) << 8) | parseInt(v.slice(0, 2), 16);};
-const changedKeys = ['borderWidth', 'borderColor', 'fillType', 'fillBgColor', 'fillPatColor', 'fillPatType', 'fillAlpha'];
+const changedKeys = ['borderWidth', 'borderColor', 'fillType', 'fillBgColor', 'fillPatColor', 'fillPatType', 'fillAlpha', 'tbVerticalAlign'];
 const strip = (props, keys) => {const copy = {...props}; for (const key of keys) delete copy[key]; return copy;};
 const read = doc => ({
   shape: JSON.parse(doc.getShapeProperties(0, 1, 0)), text: doc.getTextFileUnicode(true), pages: doc.pageCount(),
@@ -68,6 +68,7 @@ function verify(source, result, expected) {
   if (expected) {
     assert.equal(after.shape.borderWidth, expected.borderWidth); assert.equal(after.shape.borderColor, expected.borderColor);
     assert.equal(after.shape.fillType, 'solid'); assert.equal(after.shape.fillBgColor, expected.fillBgColor);
+    assert.equal(after.shape.tbVerticalAlign, 'Center');
   } else {
     for (const key of changedKeys) assert.deepEqual(after.shape[key], before.shape[key], key + ' must be restored');
   }
@@ -92,9 +93,11 @@ try {
       await frame.getByRole('button', {name: '채우기', exact: true}).click();
       await frame.getByRole('radio', {name: '단색 채우기', exact: true}).check();
       await frame.getByLabel('채우기 면 색', {exact: true}).fill('#ffff00');
+      await frame.getByRole('button', {name: '글상자', exact: true}).click();
+      await frame.getByRole('button', {name: '글상자 세로 가운데 정렬', exact: true}).click();
       await frame.getByRole('button', {name: '설정(D)', exact: true}).click();
       await save(page, 1); await check(true);
-      pass(entry.name + ' text-box line width, line colour and solid fill through 개체 속성 keep the text and other properties');
+      pass(entry.name + ' text-box line width, line colour, solid fill and vertical centring through 개체 속성 keep the text and other properties');
       await editMenu(frame, '되돌리기'); await save(page, 2); await check(false);
       await editMenu(frame, '다시 실행');
       await page.waitForFunction(() => {const revision = localStudio.element.contentWindow.rhwpStudio.localRecovery.read(Number.MAX_SAFE_INTEGER).revision; return revision > 0 && revision === Number(document.querySelector('#status').dataset.savedRevision);});
@@ -110,6 +113,8 @@ try {
       await frame.getByRole('button', {name: '채우기', exact: true}).click();
       assert.equal(await frame.getByRole('radio', {name: '단색 채우기', exact: true}).isChecked(), true);
       assert.equal(await frame.getByLabel('채우기 면 색', {exact: true}).inputValue(), '#ffff00');
+      await frame.getByRole('button', {name: '글상자', exact: true}).click();
+      assert.ok((await frame.getByRole('button', {name: '글상자 세로 가운데 정렬', exact: true}).getAttribute('class')).includes('active'));
       await frame.getByRole('button', {name: '설정(D)', exact: true}).click();
       await save(page, 4); await check(true);
       assert.equal(digest(await readFile(entry.source)), entry.sourceSha256);
