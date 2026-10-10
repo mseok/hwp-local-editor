@@ -61,7 +61,7 @@ function verify(source, result, headerText, footerText = 'FOOTER-KEEP', headerFo
     assert.deepEqual(strip(afterChar, charKeys), strip(beforeChar, charKeys), 'header character properties other than size must stay');
     before.headerChar = after.headerChar;
   }
-  assert.equal(after.header.text, headerText);
+  if (typeof headerText === 'function') assert.ok(headerText(after.header.text), 'header text predicate'); else assert.equal(after.header.text, headerText);
   assert.deepEqual({...after.header, text: undefined}, {...before.header, text: undefined}, 'header control identity must stay');
   assert.equal(after.footer.text, footerText);
   assert.deepEqual({...after.footer, text: undefined}, {...before.footer, text: undefined}, 'footer control identity must stay');
@@ -148,6 +148,20 @@ try {
         assert.equal((xml.match(/<hp:autoNum[^>]*numType="PAGE"/g) || []).length, 1);
       } finally {withField.free();}
       pass(entry.name + ' page-number field inserted in the footer survives saving and reopening');
+      await enterHeader(frame);
+      await input.press('End');
+      await frame.getByRole('button', {name: '총 쪽수 삽입', exact: true}).click();
+      await frame.getByRole('button', {name: '파일 이름 삽입', exact: true}).click();
+      await closeHeader(frame);
+      await save(page, 9 + undone); await check(text => text.startsWith('HEADER-EDITED 2026 확인') && text.length > 'HEADER-EDITED 2026 확인'.length, 'FOOTER-NEW-KEEP ', 1400, 200);
+      const withFields = new HwpDocument(await readFile(entry.output));
+      try {
+        const xml = unzip(Buffer.from(withFields.exportHwpx())).get('Contents/section0.xml').toString();
+        assert.equal((xml.match(/<hp:autoNum[^>]*numType="TOTAL_PAGE"/g) || []).length, 1, 'one total-page field in the header');
+        assert.equal((xml.match(/<hp:fieldBegin[^>]*type="PATH"/g) || []).length, 1, 'one file-name field in the header');
+        assert.equal((xml.match(/<hp:autoNum[^>]*numType="PAGE"/g) || []).length, 1, 'the footer page-number field stays');
+      } finally {withFields.free();}
+      pass(entry.name + ' total-page and file-name fields inserted in the header survive saving and reopening');
     } finally {source.free(); await page.close();}
   }
   assert.deepEqual(report.errors, []); assert.deepEqual(report.warnings, []); assert.deepEqual(report.externalRequests, []);
