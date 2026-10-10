@@ -5,7 +5,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import {createWorkspace, digest} from '../app/workspace.mjs';
 import {initSync, HwpDocument} from '../.build/core/rhwp.js';
-import {unzip} from './zip-fixture.mjs';
+import {unzip, zip} from './zip-fixture.mjs';
 
 const require = createRequire(process.env.PLAYWRIGHT_PACKAGE_PATH || import.meta.url), {chromium} = require('playwright');
 await mkdir('test-results', {recursive: true});
@@ -38,6 +38,26 @@ const files = [];
       const file = path.join(root, 'header-footer-oddeven.' + format);
       await writeFile(file, format === 'hwp' ? d.exportHwp() : d.exportHwpx()); files.push(file);
     }
+  } finally {d.free();}
+}
+{
+  const d = new HwpDocument(blank);
+  try {
+    d.createBlankDocument(); d.insertText(0, 0, 0, 'SECTION-ONE');
+    assert.equal(JSON.parse(d.createHeaderFooter(0, true, 0)).ok, true); d.insertTextInHeaderFooter(0, true, 0, 0, 0, 'HEADER-ONE');
+    const entries = unzip(Buffer.from(d.exportHwpx()));
+    const hpf = entries.get('Contents/content.hpf').toString(), header = entries.get('Contents/header.xml').toString(), s0 = entries.get('Contents/section0.xml').toString();
+    entries.set('Contents/section1.xml', Buffer.from(s0.replace(/SECTION-ONE/g, 'SECTION-TWO').replace(/HEADER-ONE/g, 'HEADER-TWO')));
+    entries.set('Contents/content.hpf', Buffer.from(hpf.replace(/(<opf:item\b[^>]*id="section0"[^>]*\/>)/, '$1<opf:item id="section1" href="Contents/section1.xml" media-type="application/xml" isEmbeded="0"/>').replace(/(<opf:itemref\b[^>]*idref="section0"[^>]*\/>)/, '$1<opf:itemref idref="section1" linear="yes"/>')));
+    entries.set('Contents/header.xml', Buffer.from(header.replace(/secCnt="\d+"/, 'secCnt="2"')));
+    const two = new HwpDocument(zip(entries));
+    try {
+      assert.equal(two.pageCount(), 2); assert.equal(JSON.parse(two.getHeaderFooter(1, true, 0)).text, 'HEADER-TWO');
+      for (const format of ['hwp', 'hwpx']) {
+        const file = path.join(root, 'header-footer-sections.' + format);
+        await writeFile(file, format === 'hwp' ? two.exportHwp() : two.exportHwpx()); files.push(file);
+      }
+    } finally {two.free();}
   } finally {d.free();}
 }
 const data = await createWorkspace(files, path.join(root, 'output')), manifest = path.join(root, 'workspace.json');
@@ -104,6 +124,38 @@ try {
       return index;
     }
     throw new Error('Body text not rendered: ' + text);
+  }
+  for (const entry of data.documents.filter(e => e.name.startsWith('header-footer-sections.'))) {
+    const source = new HwpDocument(await readFile(entry.source)), page = await context.newPage(), frame = page.frameLocator('#editor iframe');
+    const input = frame.getByRole('textbox', {name: '문서 편집 입력', exact: true});
+    const headers = doc => ({one: JSON.parse(doc.getHeaderFooter(0, true, 0)).text, two: JSON.parse(doc.getHeaderFooter(1, true, 0)).text, text: doc.getTextFileUnicode(true), pages: doc.pageCount(), list0: doc.getHeaderFooterList(0), list1: doc.getHeaderFooterList(1)});
+    const check = async (one, two) => {
+      const saved = new HwpDocument(await readFile(entry.output));
+      try {const before = headers(source), after = headers(saved); assert.equal(after.one, one); assert.equal(after.two, two); assert.equal(after.text, before.text); assert.equal(after.pages, before.pages); assert.equal(after.list0, before.list0); assert.equal(after.list1, before.list1);} finally {saved.free();}
+    };
+    try {
+      await page.goto(base + '/editor?id=' + entry.id); await ready(page);
+      assert.equal(await clickBodyText(frame, source, 'SECTION-TWO'), 1);
+      await enterHeader(frame);
+      await input.press('Home');
+      for (let i = 0; i < 'HEADER-TWO'.length; i++) await input.press('Shift+ArrowRight');
+      await input.pressSequentially('HEADER-TWO-EDIT');
+      await closeHeader(frame);
+      await save(page, 1); await check('HEADER-ONE', 'HEADER-TWO-EDIT');
+      pass(entry.name + ' editing the header from the second section changes only that section header');
+      assert.equal(await clickBodyText(frame, source, 'SECTION-ONE'), 0);
+      await enterHeader(frame);
+      await input.press('Home');
+      for (let i = 0; i < 'HEADER-ONE'.length; i++) await input.press('Shift+ArrowRight');
+      await input.pressSequentially('HEADER-ONE-EDIT');
+      await closeHeader(frame);
+      await save(page, 2); await check('HEADER-ONE-EDIT', 'HEADER-TWO-EDIT');
+      await page.goto(base + '/editor?id=' + entry.id + '&result=1'); await ready(page); await check('HEADER-ONE-EDIT', 'HEADER-TWO-EDIT');
+      assert.equal(digest(await readFile(entry.source)), entry.sourceSha256);
+      const receipt = JSON.parse(await readFile(entry.output + '.receipt.json'));
+      assert.equal(receipt.outputSha256, digest(await readFile(entry.output))); assert.equal(receipt.contentLoss.count, 0);
+      pass(entry.name + ' editing the first section header afterwards keeps the second and the result reopens');
+    } finally {source.free(); await page.close();}
   }
   for (const entry of data.documents.filter(e => e.name.startsWith('header-footer-oddeven.'))) {
     const source = new HwpDocument(await readFile(entry.source)), page = await context.newPage(), frame = page.frameLocator('#editor iframe');
