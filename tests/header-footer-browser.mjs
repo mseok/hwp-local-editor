@@ -26,6 +26,20 @@ const files = [];
     }
   } finally {d.free();}
 }
+{
+  const d = new HwpDocument(blank);
+  try {
+    d.createBlankDocument(); d.insertText(0, 0, 0, 'PAGE-ONE');
+    for (let i = 0; i < 60; i++) {d.splitParagraph(0, i, d.getParagraphLength(0, i)); d.insertText(0, i + 1, 0, 'LINE-' + (i + 1));}
+    assert.equal(d.pageCount(), 2);
+    assert.equal(JSON.parse(d.createHeaderFooter(0, true, 2)).label, '홀수 쪽'); d.insertTextInHeaderFooter(0, true, 2, 0, 0, 'ODD-TARGET');
+    assert.equal(JSON.parse(d.createHeaderFooter(0, true, 1)).label, '짝수 쪽'); d.insertTextInHeaderFooter(0, true, 1, 0, 0, 'EVEN-TARGET');
+    for (const format of ['hwp', 'hwpx']) {
+      const file = path.join(root, 'header-footer-oddeven.' + format);
+      await writeFile(file, format === 'hwp' ? d.exportHwp() : d.exportHwpx()); files.push(file);
+    }
+  } finally {d.free();}
+}
 const data = await createWorkspace(files, path.join(root, 'output')), manifest = path.join(root, 'workspace.json');
 await writeFile(manifest, json(data));
 const port = 18873, base = 'http://127.0.0.1:' + port;
@@ -72,7 +86,58 @@ try {
   browser = await chromium.launch({headless: true, executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH || undefined});
   const context = await browser.newContext({viewport: {width: 1280, height: 1050}});
   context.on('page', page => {page.on('pageerror', error => report.errors.push(error.message)); page.on('console', message => {if (['warning', 'error'].includes(message.type())) report.warnings.push(message.text());}); page.on('request', request => {if (!request.url().startsWith(base)) report.externalRequests.push(request.url());});});
-  for (const entry of data.documents) {
+  async function pageCanvas(frame, index) {
+    const canvases = frame.locator('#scroll-container canvas');
+    const order = await canvases.evaluateAll(elements => elements.map((element, position) => ({position, top: parseFloat(element.style.top)})).sort((a, b) => a.top - b.top).map(entry => entry.position));
+    assert(index < order.length, 'The requested page must have a rendered canvas');
+    return canvases.nth(order[index]);
+  }
+  async function clickBodyText(frame, source, text) {
+    for (let index = 0; index < source.pageCount(); index++) {
+      const tree = JSON.parse(source.getPageRenderTree(index));
+      let found = null;
+      (function visit(node) {if (node.type === 'TextRun' && node.text === text) found = node.bbox; for (const child of node.children || []) visit(child);})(tree);
+      if (!found) continue;
+      const canvas = await pageCanvas(frame, index);
+      const size = await canvas.evaluate(el => ({width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height}));
+      await canvas.click({position: {x: (found.x + found.w / 2) * size.width / tree.bbox.w, y: (found.y + found.h / 2) * size.height / tree.bbox.h}});
+      return index;
+    }
+    throw new Error('Body text not rendered: ' + text);
+  }
+  for (const entry of data.documents.filter(e => e.name.startsWith('header-footer-oddeven.'))) {
+    const source = new HwpDocument(await readFile(entry.source)), page = await context.newPage(), frame = page.frameLocator('#editor iframe');
+    const input = frame.getByRole('textbox', {name: '문서 편집 입력', exact: true});
+    const headers = doc => ({odd: JSON.parse(doc.getHeaderFooter(0, true, 2)).text, even: JSON.parse(doc.getHeaderFooter(0, true, 1)).text, text: doc.getTextFileUnicode(true), pages: doc.pageCount(), list: doc.getHeaderFooterList(0)});
+    const check = async (odd, even) => {
+      const saved = new HwpDocument(await readFile(entry.output));
+      try {const before = headers(source), after = headers(saved); assert.equal(after.odd, odd); assert.equal(after.even, even); assert.equal(after.text, before.text); assert.equal(after.pages, before.pages); assert.equal(after.list, before.list);} finally {saved.free();}
+    };
+    try {
+      await page.goto(base + '/editor?id=' + entry.id); await ready(page);
+      assert.equal(await clickBodyText(frame, source, 'PAGE-ONE'), 0);
+      await enterHeader(frame);
+      await input.press('Home');
+      for (let i = 0; i < 'ODD-TARGET'.length; i++) await input.press('Shift+ArrowRight');
+      await input.pressSequentially('ODD-EDITED');
+      await closeHeader(frame);
+      await save(page, 1); await check('ODD-EDITED', 'EVEN-TARGET');
+      pass(entry.name + ' editing the header from page one changes only the odd-page header');
+      assert.equal(await clickBodyText(frame, source, 'LINE-50'), 1);
+      await enterHeader(frame);
+      await input.press('Home');
+      for (let i = 0; i < 'EVEN-TARGET'.length; i++) await input.press('Shift+ArrowRight');
+      await input.pressSequentially('EVEN-EDITED');
+      await closeHeader(frame);
+      await save(page, 2); await check('ODD-EDITED', 'EVEN-EDITED');
+      await page.goto(base + '/editor?id=' + entry.id + '&result=1'); await ready(page); await check('ODD-EDITED', 'EVEN-EDITED');
+      assert.equal(digest(await readFile(entry.source)), entry.sourceSha256);
+      const receipt = JSON.parse(await readFile(entry.output + '.receipt.json'));
+      assert.equal(receipt.outputSha256, digest(await readFile(entry.output))); assert.equal(receipt.contentLoss.count, 0);
+      pass(entry.name + ' editing the header from page two changes only the even-page header and the result reopens');
+    } finally {source.free(); await page.close();}
+  }
+  for (const entry of data.documents.filter(e => e.name.startsWith('header-footer.'))) {
     const source = new HwpDocument(await readFile(entry.source)), page = await context.newPage(), frame = page.frameLocator('#editor iframe');
     const check = async (headerText, footerText, headerFontSize, headerLineSpacing) => {const saved = new HwpDocument(await readFile(entry.output)); try {verify(source, saved, headerText, footerText, headerFontSize, headerLineSpacing);} finally {saved.free();}};
     const input = frame.getByRole('textbox', {name: '문서 편집 입력', exact: true});
