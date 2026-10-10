@@ -9118,7 +9118,7 @@ index c6de9bdb5..7ac621c72 100644
    },
    {
 diff --git a/rhwp-studio/src/engine/input-handler.ts b/rhwp-studio/src/engine/input-handler.ts
-index 043ee77ee..724190b37 100644
+index 043ee77ee..dc90d39fd 100644
 --- a/rhwp-studio/src/engine/input-handler.ts
 +++ b/rhwp-studio/src/engine/input-handler.ts
 @@ -19,6 +19,7 @@ import { VirtualScroll } from '@/view/virtual-scroll';
@@ -9183,7 +9183,20 @@ index 043ee77ee..724190b37 100644
    }
  
    /**
-@@ -2414,7 +2403,7 @@ export class InputHandler {
+@@ -2044,8 +2033,10 @@ export class InputHandler {
+     this.executeOperation({ kind: 'command', command: cmd });
+   }
+ 
+-  private applyCharFormatInHeaderFooterSelection(props: Partial<CharProperties>): boolean {
+-    const ordered = this.getNonEmptyHeaderFooterSelection();
++  private applyCharFormatInHeaderFooterSelection(
++    props: Partial<CharProperties>,
++    ordered = this.getNonEmptyHeaderFooterSelection(),
++  ): boolean {
+     if (!ordered) return false;
+     const selection = this.headerFooterSelectionSnapshot(ordered);
+     const context: EditContext = {
+@@ -2414,7 +2405,7 @@ export class InputHandler {
     * 된다 — 여러 칸을 골라도 첫 칸만 바뀌는 증상.
     *
     * 셀 산출 축은 같은 블록을 대상으로 하는 applyCopiedCellPropsToSelection 과 같게 맞춘다
@@ -9192,7 +9205,7 @@ index 043ee77ee..724190b37 100644
     */
    private getSelectedCellBlock(): SelectedCellBlock | null {
      if (!this.cursor.isInCellSelectionMode()) return null;
-@@ -2512,23 +2501,33 @@ export class InputHandler {
+@@ -2512,23 +2503,33 @@ export class InputHandler {
  
    /** 셀 블록 안 모든 셀의 모든 문단을 문단 서식 대상으로 만든다 */
    private getParaFormatTargetsForCellBlock(block: SelectedCellBlock): ParaFormatTarget[] {
@@ -9231,7 +9244,7 @@ index 043ee77ee..724190b37 100644
        if (start.sectionIndex !== end.sectionIndex) return [];
        if (start.parentParaIndex !== end.parentParaIndex) return [];
        const startPath = start.cellPath?.[0];
-@@ -4215,13 +4214,13 @@ export class InputHandler {
+@@ -4215,13 +4216,13 @@ export class InputHandler {
    /** 그림/글상자 클릭 감지 — getPageControlLayout으로 개체 bbox 겹침 확인 */
    private findPictureAtClick(
      pageIdx: number, pageX: number, pageY: number,
@@ -9247,7 +9260,7 @@ index 043ee77ee..724190b37 100644
    ): { pageIndex: number; x: number; y: number; w: number; h: number } | null {
      return _picture.findPictureBbox.call(this, ref);
    }
-@@ -4808,21 +4807,25 @@ export class InputHandler {
+@@ -4808,21 +4809,25 @@ export class InputHandler {
    }
  
    /** 글상자 내부 텍스트 편집 모드 진입 */
@@ -9279,7 +9292,7 @@ index 043ee77ee..724190b37 100644
        isTextBox: true,
      });
      this.cursor.resetPreferredX();
-@@ -4831,16 +4834,24 @@ export class InputHandler {
+@@ -4831,16 +4836,24 @@ export class InputHandler {
    }
  
    /** 표 캡션 텍스트 편집 모드 진입 (cellIndex=65534로 캡션 구분) */
@@ -9308,7 +9321,7 @@ index 043ee77ee..724190b37 100644
      });
      this.cursor.resetPreferredX();
      this.updateCaret();
-@@ -4859,6 +4870,8 @@ export class InputHandler {
+@@ -4859,6 +4872,8 @@ export class InputHandler {
    /** 현재 커서 위치를 반환한다 */
    getCursorPosition(): DocumentPosition { return this.cursor.getPosition(); }
  
@@ -9317,7 +9330,7 @@ index 043ee77ee..724190b37 100644
    /** 별도 좌표계·개체 선택을 본문 링크 편집으로 오인하지 않도록 명시적으로 차단한다. */
    canEditHyperlink(): boolean {
      return !this.cursor.isInHeaderFooter() && !this.cursor.isInFootnote()
-@@ -5476,7 +5489,7 @@ export class InputHandler {
+@@ -5476,7 +5491,7 @@ export class InputHandler {
    performRedo(): void { this.handleRedo(); }
  
    /** 복사 (커맨드 시스템용 — 컨텍스트 메뉴/도구 상자에서 호출) */
@@ -9326,7 +9339,7 @@ index 043ee77ee..724190b37 100644
      // 개체 선택 모드 → 직접 클립보드 기록 (textarea 포커스 불필요)
      if (this.cursor.isInPictureObjectSelection()) {
        const ref = this.cursor.getSelectedPictureRef();
-@@ -5495,11 +5508,12 @@ export class InputHandler {
+@@ -5495,11 +5510,12 @@ export class InputHandler {
              _keyboard.writeTextHtmlToClipboard(text, markedHtml)
                .catch(() => navigator.clipboard.writeText(text).catch(() => {}));
            }
@@ -9340,7 +9353,7 @@ index 043ee77ee..724190b37 100644
      }
      if (this.cursor.isInTableObjectSelection()) {
        const ref = this.cursor.getSelectedTableRef();
-@@ -5519,15 +5533,16 @@ export class InputHandler {
+@@ -5519,15 +5535,16 @@ export class InputHandler {
            const markedHtml = _keyboard.prepareRhwpInternalClipboardHtml(this, html, text);
            _keyboard.writeTextHtmlToClipboard(text, markedHtml)
              .catch(() => navigator.clipboard.writeText(text).catch(() => {}));
@@ -9359,7 +9372,7 @@ index 043ee77ee..724190b37 100644
    }
  
    /** 붙이기 (커맨드 시스템용 — 컨텍스트 메뉴/도구 상자에서 호출) */
-@@ -5568,9 +5583,11 @@ export class InputHandler {
+@@ -5568,9 +5585,11 @@ export class InputHandler {
      if (this.cursor.isInTableObjectSelection()) {
        const ref = this.cursor.getSelectedTableRef();
        if (ref) {
@@ -9374,7 +9387,7 @@ index 043ee77ee..724190b37 100644
          this.cursor.moveOutOfSelectedTable();
          this.eventBus.emit('table-object-selection-changed', false);
          this.executeOperation({ kind: 'snapshot', operationType: 'cutTable', operation: (wasm: WasmBridge) => {
-@@ -5604,18 +5621,7 @@ export class InputHandler {
+@@ -5604,18 +5623,7 @@ export class InputHandler {
      if (this.cursor.isInTableObjectSelection()) {
        const ref = this.cursor.getSelectedTableRef();
        if (!ref) return;
@@ -9394,7 +9407,7 @@ index 043ee77ee..724190b37 100644
        return;
      }
      if (this.cursor.hasSelection()) {
-@@ -5623,6 +5629,44 @@ export class InputHandler {
+@@ -5623,6 +5631,44 @@ export class InputHandler {
      }
    }
  
@@ -9439,7 +9452,7 @@ index 043ee77ee..724190b37 100644
    /** 전체 선택 (커맨드 시스템용) */
    performSelectAll(): void { this.handleSelectAll(); }
  
-@@ -5930,6 +5974,9 @@ export class InputHandler {
+@@ -5930,6 +5976,9 @@ export class InputHandler {
      }
      const pos = this.cursor.getPosition();
      if (pos.parentParaIndex !== undefined) {
@@ -9449,6 +9462,32 @@ index 043ee77ee..724190b37 100644
        return this.wasm.getCellParaPropertiesAt(
          pos.sectionIndex, pos.parentParaIndex, pos.controlIndex!,
          pos.cellIndex!, pos.cellParaIndex!,
+@@ -5988,6 +6037,25 @@ export class InputHandler {
+     this.applyParaFormat(props as Record<string, unknown>);
+   }
+ 
++  /** 머리말/꼬리말 편집 중인지 (서식 대화상자가 범위 적용 경로를 고르는 데 쓴다) */
++  isEditingHeaderFooter(): boolean {
++    return this.cursor.isInHeaderFooter();
++  }
++
++  /** 머리말/꼬리말의 비어 있지 않은 선택 범위. 대화상자를 열기 전에 잡아 두고 적용 때 넘긴다. */
++  getHeaderFooterSelection(): ReturnType<CursorState['getHeaderFooterSelectionOrdered']> {
++    if (!this.cursor.isInHeaderFooter()) return null;
++    return this.getNonEmptyHeaderFooterSelection();
++  }
++
++  /** 잡아 둔 머리말/꼬리말 선택 범위에 글자 서식을 적용한다 (글자 모양 대화상자용) */
++  applyCharPropsToHeaderFooterRange(
++    ordered: NonNullable<ReturnType<CursorState['getHeaderFooterSelectionOrdered']>>,
++    props: Partial<CharProperties>,
++  ): void {
++    this.applyCharFormatInHeaderFooterSelection(props, ordered);
++  }
++
+   /**
+    * [Task #2374] 이미 적용된 양식 값 변경을 역연산 커맨드로 기록한다(no-op 제외).
+    * 미기록 시 이후 스냅샷 undo 가 값 변경 이전 문서를 복원해 양식 값을 무언 파괴한다
 diff --git a/rhwp-studio/vite.config.ts b/rhwp-studio/vite.config.ts
 index f860fb8fa..202855e83 100644
 --- a/rhwp-studio/vite.config.ts
@@ -11931,10 +11970,46 @@ index 7c31daa4c..e328f71ef 100644
                      c.paragraphs.first().map_or(0, |p| p.text.chars().count())
                  })
 diff --git a/rhwp-studio/src/command/commands/format.ts b/rhwp-studio/src/command/commands/format.ts
-index 99fa75dd2..6b7214001 100644
+index 99fa75dd2..21c903f96 100644
 --- a/rhwp-studio/src/command/commands/format.ts
 +++ b/rhwp-studio/src/command/commands/format.ts
-@@ -480,16 +480,16 @@ export const formatCommands: CommandDef[] = [
+@@ -255,8 +255,10 @@ export const formatCommands: CommandDef[] = [
+       if (!ih) return;
+       const charProps = ih.getCharProperties();
+       // 대화상자 열기 전 선택 범위를 저장 (대화상자 조작 중 선택이 풀릴 수 있음)
+-      const savedSel = ih.getSelection();
+-      if (!savedSel) return;
++      // 머리말/꼬리말 편집 중에는 본문 선택이 아니라 머리말/꼬리말 선택 범위를 쓴다.
++      const hfSelection = ih.isEditingHeaderFooter() ? ih.getHeaderFooterSelection() : null;
++      const savedSel = hfSelection ? null : ih.getSelection();
++      if (!hfSelection && !savedSel) return;
+       const dialog = new CharShapeDialog(services.wasm, services.eventBus);
+       dialog.onApply = (mods) => {
+         // fontName → fontId 변환 (WASM parse_char_shape_mods는 fontId만 인식)
+@@ -265,7 +267,8 @@ export const formatCommands: CommandDef[] = [
+           if (fontId >= 0) mods.fontId = fontId;
+           delete mods.fontName;
+         }
+-        ih.applyCharPropsToRange(savedSel.start, savedSel.end, mods);
++        if (hfSelection) ih.applyCharPropsToHeaderFooterRange(hfSelection, mods);
++        else if (savedSel) ih.applyCharPropsToRange(savedSel.start, savedSel.end, mods);
+       };
+       dialog.onClose = () => ih.focus();
+       dialog.show(charProps);
+@@ -286,8 +289,11 @@ export const formatCommands: CommandDef[] = [
+       const curPos = ih.getCursorPosition();
+       const range = sel ?? { start: curPos, end: curPos };
+       const dialog = new ParaShapeDialog(services.wasm, services.eventBus);
++      const inHeaderFooter = ih.isEditingHeaderFooter();
+       dialog.onApply = (mods) => {
+-        ih.applyParaPropsToRange(range.start, range.end, mods);
++        // 머리말/꼬리말 문단은 범위 대상 계산이 비어 있으므로 캐럿 문단 경로로 적용한다.
++        if (inHeaderFooter) ih.applyParaPropsAtCursor(mods);
++        else ih.applyParaPropsToRange(range.start, range.end, mods);
+       };
+       dialog.onClose = () => ih.focus();
+       dialog.show(paraProps);
+@@ -480,16 +486,16 @@ export const formatCommands: CommandDef[] = [
            return;
          }
          const dialog = new PicturePropsDialog(services.wasm, services.eventBus, services);

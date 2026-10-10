@@ -44,8 +44,22 @@ const read = doc => ({
   bodyChar: doc.getCharPropertiesAt(0, 0, 0), bodyPara: doc.getParaPropertiesAt(0, 0), secondChar: doc.getCharPropertiesAt(0, 1, 0),
   headerChar: doc.getCharPropertiesInHeaderFooter(0, true, 0, 0, 0), headerPara: doc.getParaPropertiesInHf(0, true, 0, 0),
 });
-function verify(source, result, headerText, footerText = 'FOOTER-KEEP') {
+const charKeys = ['fontSize', 'charShapeId', 'fontId', 'fontIds', 'borderFillId'];
+const strip = (props, keys) => {const copy = {...props}; for (const key of keys) delete copy[key]; return copy;};
+function verify(source, result, headerText, footerText = 'FOOTER-KEEP', headerFontSize = null, headerLineSpacing = null) {
   const before = read(source), after = read(result);
+  if (headerLineSpacing) {
+    const beforePara = JSON.parse(before.headerPara), afterPara = JSON.parse(after.headerPara);
+    assert.equal(afterPara.lineSpacing, headerLineSpacing, 'header line spacing');
+    assert.deepEqual(strip(afterPara, ['lineSpacing', 'paraShapeId', 'borderFillId']), strip(beforePara, ['lineSpacing', 'paraShapeId', 'borderFillId']), 'header paragraph properties other than line spacing must stay');
+    before.headerPara = after.headerPara;
+  }
+  if (headerFontSize) {
+    const beforeChar = JSON.parse(before.headerChar), afterChar = JSON.parse(after.headerChar);
+    assert.equal(afterChar.fontSize, headerFontSize, 'header font size');
+    assert.deepEqual(strip(afterChar, charKeys), strip(beforeChar, charKeys), 'header character properties other than size must stay');
+    before.headerChar = after.headerChar;
+  }
   assert.equal(after.header.text, headerText);
   assert.deepEqual({...after.header, text: undefined}, {...before.header, text: undefined}, 'header control identity must stay');
   assert.equal(after.footer.text, footerText);
@@ -59,7 +73,7 @@ try {
   context.on('page', page => {page.on('pageerror', error => report.errors.push(error.message)); page.on('console', message => {if (['warning', 'error'].includes(message.type())) report.warnings.push(message.text());}); page.on('request', request => {if (!request.url().startsWith(base)) report.externalRequests.push(request.url());});});
   for (const entry of data.documents) {
     const source = new HwpDocument(await readFile(entry.source)), page = await context.newPage(), frame = page.frameLocator('#editor iframe');
-    const check = async (headerText, footerText) => {const saved = new HwpDocument(await readFile(entry.output)); try {verify(source, saved, headerText, footerText);} finally {saved.free();}};
+    const check = async (headerText, footerText, headerFontSize, headerLineSpacing) => {const saved = new HwpDocument(await readFile(entry.output)); try {verify(source, saved, headerText, footerText, headerFontSize, headerLineSpacing);} finally {saved.free();}};
     const input = frame.getByRole('textbox', {name: '문서 편집 입력', exact: true});
     try {
       await page.goto(base + '/editor?id=' + entry.id); await ready(page);
@@ -101,6 +115,26 @@ try {
       await closeHeader(frame);
       await save(page, 5 + undone); await check('HEADER-EDITED 2026 확인', 'FOOTER-NEW-KEEP');
       pass(entry.name + ' footer text replaced through 꼬리말 keeps the edited header and the body');
+      await enterHeader(frame);
+      await input.press('Home');
+      for (let i = 0; i < 'HEADER-EDITED'.length; i++) await input.press('Shift+ArrowRight');
+      await menu(frame, '서식', '글자 모양');
+      const dialog = frame.locator('.cs-dialog');
+      await dialog.getByRole('spinbutton', {name: '글자 모양 기준 크기(pt)', exact: true}).waitFor({timeout: 5000});
+      await dialog.getByRole('spinbutton', {name: '글자 모양 기준 크기(pt)', exact: true}).fill('14');
+      await dialog.getByRole('button', {name: '설정(D)', exact: true}).click();
+      await closeHeader(frame);
+      await save(page, 6 + undone); await check('HEADER-EDITED 2026 확인', 'FOOTER-NEW-KEEP', 1400);
+      pass(entry.name + ' header text size changed through 글자 모양 keeps the header text, footer and body');
+      await enterHeader(frame);
+      await menu(frame, '서식', '문단 모양');
+      const paraDialog = frame.locator('.ps-dialog');
+      await paraDialog.getByRole('spinbutton', {name: '문단 모양 줄 간격', exact: true}).waitFor({timeout: 5000});
+      await paraDialog.getByRole('spinbutton', {name: '문단 모양 줄 간격', exact: true}).fill('200');
+      await paraDialog.getByRole('button', {name: '설정(D)', exact: true}).click();
+      await closeHeader(frame);
+      await save(page, 7 + undone); await check('HEADER-EDITED 2026 확인', 'FOOTER-NEW-KEEP', 1400, 200);
+      pass(entry.name + ' header line spacing changed through 문단 모양 keeps the header text and size');
     } finally {source.free(); await page.close();}
   }
   assert.deepEqual(report.errors, []); assert.deepEqual(report.warnings, []); assert.deepEqual(report.externalRequests, []);
