@@ -17,6 +17,7 @@ const keepPath = [{controlIndex: 0, cellIndex: 0, cellParaIndex: 0}, {controlInd
 const outerPath = [{controlIndex: 0, cellIndex: 0, cellParaIndex: 0}];
 const outerKeepPath = [{controlIndex: 0, cellIndex: 1, cellParaIndex: 0}];
 const boxPath = [{controlIndex: 0, cellIndex: 0, cellParaIndex: 0}], boxKeepPath = [{controlIndex: 0, cellIndex: 0, cellParaIndex: 1}];
+const cellBoxPath = [{controlIndex: 0, cellIndex: 0, cellParaIndex: 0}, {controlIndex: 0, cellIndex: 0, cellParaIndex: 0}], cellBoxKeepPath = [{controlIndex: 0, cellIndex: 0, cellParaIndex: 0}, {controlIndex: 0, cellIndex: 0, cellParaIndex: 1}];
 const files = [];
 {
   const owner = new HwpDocument(blank), inner = new HwpDocument(blank);
@@ -59,6 +60,31 @@ const files = [];
       await writeFile(file, format === 'hwp' ? owner.exportHwp() : owner.exportHwpx()); files.push(file);
     }
   } finally {owner.free();}
+}
+{
+  const box = new HwpDocument(blank), owner = new HwpDocument(blank);
+  try {
+    box.createBlankDocument();
+    const shape = JSON.parse(box.createShapeControl(json({sectionIdx: 0, paraIdx: 0, charOffset: 0, width: 24000, height: 9000, treatAsChar: true, shapeType: 'textbox', horzOffset: 0, vertOffset: 0})));
+    box.insertTextInCell(0, 0, shape.controlIdx, 0, 0, 0, 'CELLBOX-TARGET');
+    box.splitParagraphInCell(0, 0, shape.controlIdx, 0, 0, 'CELLBOX-TARGET'.length); box.insertTextInCell(0, 0, shape.controlIdx, 0, 1, 0, 'CELLBOX-KEEP');
+    const shapeXml = unzip(Buffer.from(box.exportHwpx())).get('Contents/section0.xml').toString().match(/<hp:rect\b[\s\S]*?<\/hp:rect>/)[0];
+    owner.createBlankDocument(); owner.insertText(0, 0, 0, 'BODY-TARGET'); owner.splitParagraph(0, 0, 'BODY-TARGET'.length);
+    owner.insertText(0, 1, 0, 'BODY-KEEP'); owner.splitParagraph(0, 1, 'BODY-KEEP'.length);
+    owner.createTableEx(json({sectionIdx: 0, paraIdx: 2, charOffset: 0, rowCount: 1, colCount: 2, treatAsChar: true, colWidths: [32000, 10000]}));
+    owner.insertTextInCell(0, 2, 0, 0, 0, 0, 'HOST-KEEP'); owner.insertTextInCell(0, 2, 0, 1, 0, 0, 'OUTER-KEEP');
+    const entries = unzip(Buffer.from(owner.exportHwpx())), section = entries.get('Contents/section0.xml').toString();
+    assert.ok(section.includes('<hp:t>HOST-KEEP</hp:t>'));
+    entries.set('Contents/section0.xml', Buffer.from(section.replace('<hp:t>HOST-KEEP</hp:t>', shapeXml + '<hp:t>HOST-KEEP</hp:t>')));
+    const nested = new HwpDocument(zip(entries));
+    try {
+      assert.equal(nested.getTextInCellByPath(0, 2, json(cellBoxPath), 0, 100), 'CELLBOX-TARGET');
+      for (const format of ['hwp', 'hwpx']) {
+        const file = path.join(root, 'text-shape-cellbox.' + format);
+        await writeFile(file, format === 'hwp' ? nested.exportHwp() : nested.exportHwpx()); files.push(file);
+      }
+    } finally {nested.free();}
+  } finally {box.free(); owner.free();}
 }
 const data = await createWorkspace(files, path.join(root, 'output')), manifest = path.join(root, 'workspace.json');
 await writeFile(manifest, json(data));
@@ -128,16 +154,29 @@ async function selectBoxText(page, frame, source, text) {
 const charKeys = ['fontFamily', 'fontFamilies', 'fontSize', 'charShapeId', 'fontId', 'fontIds', 'borderFillId'];
 const paraKeys = ['lineSpacing', 'paraShapeId', 'borderFillId'];
 const strip = (props, keys) => {const copy = {...props}; for (const key of keys) delete copy[key]; return copy;};
-const readBox = doc => ({
-  bodyChar: JSON.parse(doc.getCharPropertiesAt(0, 0, 0)), bodyPara: JSON.parse(doc.getParaPropertiesAt(0, 0)),
-  bodyKeepChar: JSON.parse(doc.getCharPropertiesAt(0, 1, 0)), bodyKeepPara: JSON.parse(doc.getParaPropertiesAt(0, 1)),
-  hostChar: JSON.parse(doc.getCharPropertiesAt(0, 2, 1)), hostPara: JSON.parse(doc.getParaPropertiesAt(0, 2)),
-  boxChar: JSON.parse(doc.getCellCharPropertiesAtByPath(0, 2, json(boxPath), 0)), boxPara: JSON.parse(doc.getCellParaPropertiesAtByPath(0, 2, json(boxPath))),
-  boxKeepChar: JSON.parse(doc.getCellCharPropertiesAtByPath(0, 2, json(boxKeepPath), 0)), boxKeepPara: JSON.parse(doc.getCellParaPropertiesAtByPath(0, 2, json(boxKeepPath))),
-  shape: doc.getShapeProperties(0, 2, 0), text: doc.getTextFileUnicode(true), pages: doc.pageCount(),
-});
-function verifyBox(source, result, expected) {
-  const before = readBox(source), after = readBox(result);
+const bodyBoxSpec = {
+  host: doc => [doc.getCharPropertiesAt(0, 2, 1), doc.getParaPropertiesAt(0, 2)], box: boxPath, keep: boxKeepPath,
+  shape: doc => doc.getShapeProperties(0, 2, 0), extra: () => '',
+};
+const cellBoxSpec = {
+  host: doc => [doc.getCellCharPropertiesAtByPath(0, 2, json(outerPath), 1), doc.getCellParaPropertiesAtByPath(0, 2, json(outerPath))], box: cellBoxPath, keep: cellBoxKeepPath,
+  shape: doc => doc.getCellShapePropertiesByPath(0, 2, json(outerPath), 0),
+  extra: doc => doc.getTableProperties(0, 2, 0) + doc.getCellProperties(0, 2, 0, 0) + doc.getCellProperties(0, 2, 0, 1) + doc.getCellCharPropertiesAtByPath(0, 2, json(outerKeepPath), 0) + doc.getCellParaPropertiesAtByPath(0, 2, json(outerKeepPath)),
+};
+const readBox = (doc, spec) => {
+  const [hostChar, hostPara] = spec.host(doc);
+  return {
+    bodyChar: JSON.parse(doc.getCharPropertiesAt(0, 0, 0)), bodyPara: JSON.parse(doc.getParaPropertiesAt(0, 0)),
+    bodyKeepChar: JSON.parse(doc.getCharPropertiesAt(0, 1, 0)), bodyKeepPara: JSON.parse(doc.getParaPropertiesAt(0, 1)),
+    hostChar: JSON.parse(hostChar), hostPara: JSON.parse(hostPara),
+    boxChar: JSON.parse(doc.getCellCharPropertiesAtByPath(0, 2, json(spec.box), 0)), boxPara: JSON.parse(doc.getCellParaPropertiesAtByPath(0, 2, json(spec.box))),
+    boxKeepChar: JSON.parse(doc.getCellCharPropertiesAtByPath(0, 2, json(spec.keep), 0)), boxKeepPara: JSON.parse(doc.getCellParaPropertiesAtByPath(0, 2, json(spec.keep))),
+    shape: spec.shape(doc), extra: spec.extra(doc), text: doc.getTextFileUnicode(true), pages: doc.pageCount(),
+  };
+};
+function verifyBox(source, result, expected, spec = bodyBoxSpec) {
+  const before = readBox(source, spec), after = readBox(result, spec);
+  assert.equal(after.extra, before.extra, 'enclosing table, cells and sibling cell must stay untouched');
   assert.equal(after.text, before.text); assert.equal(after.pages, before.pages); assert.equal(after.shape, before.shape);
   for (const key of ['bodyKeepChar', 'hostChar', 'boxKeepChar', 'bodyChar']) assert.deepEqual(after[key], before[key], key + ' must stay untouched');
   for (const key of ['bodyKeepPara', 'hostPara', 'boxKeepPara', 'bodyPara']) assert.deepEqual(after[key], before[key], key + ' must stay untouched');
@@ -180,16 +219,17 @@ try {
   browser = await chromium.launch({headless: true, executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH || undefined});
   const context = await browser.newContext({viewport: {width: 1280, height: 1050}});
   context.on('page', page => {page.on('pageerror', error => report.errors.push(error.message)); page.on('console', message => {if (['warning', 'error'].includes(message.type())) report.warnings.push(message.text());}); page.on('request', request => {if (!request.url().startsWith(base)) report.externalRequests.push(request.url());});});
-  for (const entry of data.documents.filter(e => e.name.startsWith('text-shape-box.'))) {
+  for (const entry of data.documents.filter(e => e.name.startsWith('text-shape-box.') || e.name.startsWith('text-shape-cellbox.'))) {
+    const inCell = entry.name.startsWith('text-shape-cellbox.'), spec = inCell ? cellBoxSpec : bodyBoxSpec, target = inCell ? 'CELLBOX-TARGET' : 'BOX-TARGET';
     const source = new HwpDocument(await readFile(entry.source)), page = await context.newPage(), frame = page.frameLocator('#editor iframe');
-    const check = async (expected) => {const saved = new HwpDocument(await readFile(entry.output)); try {verifyBox(source, saved, expected);} finally {saved.free();}};
+    const check = async (expected) => {const saved = new HwpDocument(await readFile(entry.output)); try {verifyBox(source, saved, expected, spec);} finally {saved.free();}};
     try {
       await page.goto(base + '/editor?id=' + entry.id); await ready(page);
-      await selectBoxText(page, frame, source, 'BOX-TARGET');
+      await selectBoxText(page, frame, source, target);
       const font = await setCharShape(frame, {font: true, size: 14});
       await save(page, 1); await check({boxChar: {font, fontSize: 1400}});
       pass(entry.name + ' text-box font and size change through 글자 모양 preserves the host, body and second box paragraph');
-      await selectBoxText(page, frame, source, 'BOX-TARGET'); await setLineSpacing(frame, 200);
+      await selectBoxText(page, frame, source, target); await setLineSpacing(frame, 200);
       await save(page, 2); await check({boxChar: {font, fontSize: 1400}, boxPara: {lineSpacing: 200}});
       pass(entry.name + ' text-box line spacing through 문단 모양 keeps the other box paragraph');
       await editMenu(frame, '되돌리기'); await editMenu(frame, '되돌리기'); await save(page, 3); await check({});
