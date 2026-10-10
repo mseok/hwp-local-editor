@@ -13813,7 +13813,7 @@ index d4d46931d..9d28845af 100644
                          return tr.cell_context.as_ref().map_or(false, |ctx| {
                              ctx.parent_para_index == parent_para
 diff --git a/rhwp-studio/src/ui/picture-props-dialog.ts b/rhwp-studio/src/ui/picture-props-dialog.ts
-index 0f3466ce9..e3d60feef 100644
+index 0f3466ce9..a09249e5e 100644
 --- a/rhwp-studio/src/ui/picture-props-dialog.ts
 +++ b/rhwp-studio/src/ui/picture-props-dialog.ts
 @@ -457,6 +457,7 @@ export class PicturePropsDialog {
@@ -13918,6 +13918,38 @@ index 0f3466ce9..e3d60feef 100644
        btn.textContent = vaIcons[i];
        btn.title = title;
        btn.dataset.value = vaValues[i];
+@@ -1394,6 +1408,7 @@ export class PicturePropsDialog {
+       btn.className = 'pp-wrap-btn pp-shadow-type-btn';
+       btn.textContent = shadowIcons[i];
+       btn.title = lbl;
++      btn.setAttribute('aria-label', '그림자 ' + lbl);
+       btn.addEventListener('click', () => {
+         this.shadowTypeBtns.forEach((b, j) => b.classList.toggle('active', j === i));
+         const enabled = i > 0;
+@@ -1433,6 +1448,7 @@ export class PicturePropsDialog {
+     const cRow = this.row();
+     cRow.appendChild(this.label(i18nText('dialog.pictureProps.label.label.x000f48')));
+     this.shadowColorInput = this.colorInput('#b2b2b2');
++    this.shadowColorInput.setAttribute('aria-label', '그림자 색');
+     this.shadowColorInput.disabled = true; // 초기 비활성 (타입 선택 시 활성)
+     cRow.appendChild(this.shadowColorInput);
+     shadowFs.appendChild(cRow);
+@@ -1440,6 +1456,7 @@ export class PicturePropsDialog {
+     const hRow = this.row();
+     hRow.appendChild(this.label(i18nText('dialog.pictureProps.label.label.x231da4')));
+     this.shadowHInput = this.numberInput();
++    this.shadowHInput.setAttribute('aria-label', '그림자 가로 간격(mm)');
+     this.shadowHInput.value = '0.0';
+     this.shadowHInput.disabled = true;
+     hRow.appendChild(this.shadowHInput);
+@@ -1482,6 +1499,7 @@ export class PicturePropsDialog {
+     const vRow = this.row();
+     vRow.appendChild(this.label(i18nText('dialog.pictureProps.label.label.x226f81')));
+     this.shadowVInput = this.numberInput();
++    this.shadowVInput.setAttribute('aria-label', '그림자 세로 간격(mm)');
+     this.shadowVInput.value = '0.0';
+     this.shadowVInput.disabled = true;
+     vRow.appendChild(this.shadowVInput);
 diff --git a/rhwp-studio/src/ui/equation-editor-dialog.ts b/rhwp-studio/src/ui/equation-editor-dialog.ts
 index 92f2d96e4..5543d585b 100644
 --- a/rhwp-studio/src/ui/equation-editor-dialog.ts
