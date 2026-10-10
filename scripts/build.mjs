@@ -1,5 +1,5 @@
 import {execFileSync} from 'node:child_process';
-import {readFile,writeFile,mkdir,cp,access} from 'node:fs/promises';
+import {readFile,writeFile,mkdir,cp,access,rm} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -43,6 +43,7 @@ await writeFile(main,(await readFile(main,'utf8')).replace(/version: 'local-comm
 run('npm',['ci','--no-audit','--no-fund'],path.join(upstream,'rhwp-studio'));
 run('npm',['run','build','--','--base=/rhwp/'],path.join(upstream,'rhwp-studio'),{RHWP_DISABLE_EXTERNAL_WEBFONTS:'1',RHWP_LOCAL_EDITOR:'1'});
 await mkdir(path.join(root,'.build'),{recursive:true});
+for(const name of ['studio','core','sdk'])await rm(path.join(root,'.build',name),{recursive:true,force:true});
 await cp(path.join(upstream,'rhwp-studio/dist'),path.join(root,'.build/studio'),{recursive:true});
 await cp(path.join(upstream,'pkg'),path.join(root,'.build/core'),{recursive:true});
 await cp(path.join(upstream,'npm/editor'),path.join(root,'.build/sdk'),{recursive:true});

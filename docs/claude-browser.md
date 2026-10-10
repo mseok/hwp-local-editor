@@ -4,6 +4,9 @@ Claude's [Chrome integration](https://code.claude.com/docs/en/chrome) operates i
 
 ## One-time browser setup
 
+`npm run setup` does all of this: it installs the pinned Playwright MCP into `.cache/claude-browser`, picks the installed Google Chrome (headless, isolated profile) or downloads a Playwright Chromium, and registers a user-scope MCP server `hwp-browser` for Claude Code that is allowed to reach only `http://127.0.0.1:8766` through `:8775`. Start a task server on one of those ports and a new Claude Code session can drive it without any per-session configuration. Pass `--no-claude-mcp` to skip the registration; the manual, session-local route below remains available.
+
+
 From this checkout, install the pinned optional dependency in its own directory:
 
 ```sh

@@ -4,11 +4,14 @@
   "private": true,
   "type": "module",
   "license": "MIT",
+  "repository": "github:mseok/hwp-local-editor",
   "engines": {
     "node": ">=22.18"
   },
   "scripts": {
+    "setup": "node scripts/setup.mjs",
     "build": "node scripts/build.mjs",
+    "package-build": "node scripts/package-build.mjs",
     "start": "node app/server.mjs",
     "test": "node --experimental-transform-types --test tests/*.test.mjs",
     "audit": "node scripts/audit-public.mjs",

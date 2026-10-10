@@ -6,6 +6,22 @@ This repository contains the local shell and source patches against rhwp v0.8.7.
 
 The full agent-workflow goal and outstanding completion gates are tracked in [agent-workflow acceptance](docs/agent-workflow-acceptance.md). Passing a tested editing route does not establish universal Hancom compatibility.
 
+## Quick start (one command)
+
+```sh
+git clone https://github.com/mseok/hwp-local-editor.git && cd hwp-local-editor && npm run setup
+```
+
+Needs Node.js 22.18+ and Git. `npm run setup` downloads the prebuilt engine for this exact source from GitHub Releases (checksum-verified; it compiles locally instead when a Rust toolchain is present), installs the `hwp-agent-edit` skill for Codex and Claude Code, and registers a headless loopback-only browser MCP server (`hwp-browser`) for Claude Code. It is safe to rerun and never opens a visible window.
+
+Or hand the link to your agent and let it do the setup and the edits in one go:
+
+> https://github.com/mseok/hwp-local-editor 를 설치하고, ~/Documents/report.hwp 에서 "2026년"을 "2027년"으로 바꿔줘.
+>
+> Set up https://github.com/mseok/hwp-local-editor and replace "2026" with "2027" in ~/Documents/report.hwp.
+
+From then on, asking Codex or Claude Code to edit an HWP/HWPX file selects the skill automatically. Codex uses its hidden browser; Claude Code uses the registered `hwp-browser` server from its next session (`AGENTS.md` and `CLAUDE.md` in this repository tell an agent the same).
+
 ## Features
 
 - Open HWP/HWPX files in a browser or an embedded local browser panel.
@@ -22,9 +38,9 @@ The full agent-workflow goal and outstanding completion gates are tracked in [ag
 - Retain the replayed native document and clipboard across reloads instead of reparsing an exported copy.
 - Exclude password-protected documents from plaintext recovery and edited export.
 
-## Requirements and build
+## Building from source (optional)
 
-Use Node.js 22.18 or newer, npm, Git, Rust 1.93.1 with the wasm32-unknown-unknown target, and wasm-bindgen-cli 0.2.127.
+`npm run setup` is enough for use. To rebuild the engine yourself, use Node.js 22.18 or newer, npm, Git, Rust 1.93.1 with the wasm32-unknown-unknown target, and wasm-bindgen-cli 0.2.127. Maintainers publish the prebuilt engine for a source version with `npm run package-build -- --publish`.
 
 ```sh
 rustup toolchain install 1.93.1
@@ -44,7 +60,7 @@ Run `node scripts/check-build.mjs` after updating the repository. The task launc
 
 ## Automatic document editing through an agent
 
-After building, install the task skill for local Codex and Claude Code:
+`npm run setup` installs the task skill; to install it alone for local Codex and Claude Code:
 
 ```sh
 node scripts/install-skill.mjs
