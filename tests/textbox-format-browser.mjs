@@ -117,7 +117,7 @@ const ready = p => p.waitForFunction(() => window.editorReady, null, {timeout: 4
 const pass = name => {report.checks.push(name); console.log('PASS', name);};
 async function save(page, revision) {await page.getByRole('button', {name: '결과 파일 저장', exact: true}).click(); await page.locator('#delivery[data-revision="' + revision + '"]').waitFor();}
 async function editMenu(frame, label) {await frame.locator('#menu-bar').getByText('편집', {exact: true}).click(); await frame.locator('#menu-bar').getByText(label, {exact: true}).click();}
-async function enter(page, source, text = 'BOX-FIRST', blank = false) {
+async function enter(page, source, text = 'BOX-FIRST', blank = false, border = false) {
   const texts = [];
   for (let index = 0; index < source.pageCount(); index++) {
     const tree = JSON.parse(source.getPageRenderTree(index));
@@ -130,19 +130,32 @@ async function enter(page, source, text = 'BOX-FIRST', blank = false) {
   const canvas = page.frameLocator('#editor iframe').locator('#scroll-container canvas').nth(index);
   const size = await canvas.evaluate(el => ({width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height}));
   const box = ancestors.findLast(n => n.type === 'TextBox').bbox;
-  const point = {x: blank ? box.x + box.w - 20 : b.x + b.w / 2, y: b.y + b.h / 2};
-  if (blank) {
+  const shape = ancestors.findLast(n => n.type === 'Rect').bbox;
+  const point = {x: border ? shape.x + shape.w + (border === 'outside' ? 1 : -1) : blank ? box.x + box.w - 20 : b.x + b.w / 2, y: b.y + b.h / 2};
+  if (blank || border) {
     assert(point.x > b.x + b.w, 'The blank click must be outside the text glyphs');
     for (const cell of ancestors.filter(n => n.type === 'Cell')) assert(point.x >= cell.bbox.x && point.x <= cell.bbox.x + cell.bbox.w && point.y >= cell.bbox.y && point.y <= cell.bbox.y + cell.bbox.h, 'The blank click must stay inside every enclosing cell');
   }
-  const hit = JSON.parse(source.hitTest(index, point.x, point.y));
+  const hit = JSON.parse(source.hitTest(index, border ? b.x + b.w / 2 : point.x, point.y));
   assert.equal(hit.isTextBox, true, 'The rendered textbox text must resolve to its own container');
   assert.equal(ancestors.filter(n => n.type === 'Cell').length, hit.cellPath.length - 1, 'The hit must retain every enclosing cell');
   assert.equal(source.getTextInCellByPath(0, hit.parentParaIndex, json(hit.cellPath), 0, 100), text);
   const caret = JSON.parse(source.getCursorRectByPath(0, hit.parentParaIndex, json(hit.cellPath), hit.charOffset));
   assert.equal(caret.pageIndex, index);
   assert(caret.x >= b.x - 1 && caret.x <= b.x + b.w + 1, 'The complete textbox path must resolve its rendered caret');
-  await canvas.dblclick({position: {x: point.x * size.width / tree.bbox.w, y: point.y * size.height / tree.bbox.h}});
+  const position = {x: point.x * size.width / tree.bbox.w, y: point.y * size.height / tree.bbox.h};
+  if (border) {
+    assert(point.x > box.x + box.w, 'The border click must be outside the padded textbox');
+    await canvas.click({position});
+    assert(await page.frameLocator('#editor iframe').locator('.table-object-layer > div').count() >= 8, 'The textbox border must select its object and display handles');
+    const controls = JSON.parse(source.getPageControlLayout(index)).controls.filter(c => c.type === 'shape');
+    const control = controls.find(c => Math.abs(c.x - shape.x) < 1 && Math.abs(c.y - shape.y) < 1);
+    assert(control, 'The visible textbox must expose an object reference');
+    assert.deepEqual(control.cellPath || [], hit.cellPath.slice(0, -1), 'The object reference must retain every enclosing cell');
+    assert.equal(control.paraIdx, hit.parentParaIndex, 'The object reference must retain its body owner');
+  }
+  if (border === 'enter') await page.frameLocator('#editor iframe').getByRole('textbox', {name: '문서 편집 입력', exact: true}).press('Enter');
+  else await canvas.dblclick({position});
 }
 function verify(source, result, changed, selected = [0], depth = 1, continued = false, alignment = 'center') {
   assert.equal(result.getTextFileUnicode(true), source.getTextFileUnicode(true));
@@ -236,6 +249,54 @@ try {
       result = new HwpDocument(await readFile(entry.output));
       try {verifyEntry(true, [0, 1], 'left'); assert.equal(digest(await readFile(entry.source)), entry.sourceSha256); const receipt = JSON.parse(await readFile(entry.output + '.receipt.json')); assert.equal(receipt.outputSha256, digest(await readFile(entry.output))); assert.equal(receipt.contentLoss.count, 0);} finally {result.free();}
       pass(entry.name + ' backward navigation format undo, redo, recovery and disk reopening');
+      const baseline = new HwpDocument(await readFile(entry.output));
+      const verifyBorder = async (edited, alignment = 'right') => {
+        const saved = new HwpDocument(await readFile(entry.output));
+        try {verify(baseline, saved, edited, [0], depth, continued, alignment);} finally {saved.free();}
+      };
+      try {
+        await enter(page, baseline, 'BOX-FIRST', false, true);
+        await frame.getByRole('button', {name: '오른쪽 정렬', exact: true}).click(); await save(page, 10); await verifyBorder(true);
+        pass(entry.name + ' border selection and double-click enter the complete textbox path');
+        await editMenu(frame, '되돌리기'); await save(page, 11); await verifyBorder(false);
+        await editMenu(frame, '다시 실행');
+        await page.waitForFunction(() => {const revision = localStudio.element.contentWindow.rhwpStudio.localRecovery.read(Number.MAX_SAFE_INTEGER).revision; return revision > 0 && revision === Number(document.querySelector('#status').dataset.savedRevision);});
+        await page.reload(); await ready(page); await save(page, 12); await verifyBorder(true);
+        pass(entry.name + ' border-entry formatting supports undo, redo and recovery');
+        await page.goto(base + '/editor?id=' + entry.id + '&result=1'); await ready(page); await verifyBorder(true);
+        assert.equal(digest(await readFile(entry.source)), entry.sourceSha256);
+        const receipt = JSON.parse(await readFile(entry.output + '.receipt.json'));
+        assert.equal(receipt.outputSha256, digest(await readFile(entry.output))); assert.equal(receipt.contentLoss.count, 0);
+        pass(entry.name + ' border-entry formatting survives saved reopening');
+        const current = new HwpDocument(await readFile(entry.output));
+        try {await enter(page, current, 'BOX-FIRST', false, 'enter');} finally {current.free();}
+        await frame.getByRole('button', {name: '가운데 정렬', exact: true}).click(); await save(page, 13); await verifyBorder(true, 'center');
+        pass(entry.name + ' Enter from the selected textbox preserves its complete path');
+        await editMenu(frame, '되돌리기'); await save(page, 14); await verifyBorder(true);
+        await editMenu(frame, '다시 실행');
+        await page.waitForFunction(() => {const revision = localStudio.element.contentWindow.rhwpStudio.localRecovery.read(Number.MAX_SAFE_INTEGER).revision; return revision > 0 && revision === Number(document.querySelector('#status').dataset.savedRevision);});
+        await page.reload(); await ready(page); await save(page, 15); await verifyBorder(true, 'center');
+        pass(entry.name + ' Enter-entry formatting supports undo, redo and recovery');
+        await page.goto(base + '/editor?id=' + entry.id + '&result=1'); await ready(page); await verifyBorder(true, 'center');
+        assert.equal(digest(await readFile(entry.source)), entry.sourceSha256);
+        const finalReceipt = JSON.parse(await readFile(entry.output + '.receipt.json'));
+        assert.equal(finalReceipt.outputSha256, digest(await readFile(entry.output))); assert.equal(finalReceipt.contentLoss.count, 0);
+        pass(entry.name + ' Enter-entry formatting survives saved reopening');
+        const outside = new HwpDocument(await readFile(entry.output));
+        try {await enter(page, outside, 'BOX-FIRST', false, 'outside');} finally {outside.free();}
+        await frame.getByRole('button', {name: '오른쪽 정렬', exact: true}).click(); await save(page, 16); await verifyBorder(true);
+        pass(entry.name + ' clicks just outside the border retain the textbox object path');
+        await editMenu(frame, '되돌리기'); await save(page, 17); await verifyBorder(true, 'center');
+        await editMenu(frame, '다시 실행');
+        await page.waitForFunction(() => {const revision = localStudio.element.contentWindow.rhwpStudio.localRecovery.read(Number.MAX_SAFE_INTEGER).revision; return revision > 0 && revision === Number(document.querySelector('#status').dataset.savedRevision);});
+        await page.reload(); await ready(page); await save(page, 18); await verifyBorder(true);
+        pass(entry.name + ' outside-border formatting supports undo, redo and recovery');
+        await page.goto(base + '/editor?id=' + entry.id + '&result=1'); await ready(page); await verifyBorder(true);
+        assert.equal(digest(await readFile(entry.source)), entry.sourceSha256);
+        const outsideReceipt = JSON.parse(await readFile(entry.output + '.receipt.json'));
+        assert.equal(outsideReceipt.outputSha256, digest(await readFile(entry.output))); assert.equal(outsideReceipt.contentLoss.count, 0);
+        pass(entry.name + ' outside-border formatting survives saved reopening');
+      } finally {baseline.free();}
     } finally {source.free(); await page.close();}
   }
   for (const entry of data.documents.filter(e => e.name.startsWith('table-in-box.'))) {
