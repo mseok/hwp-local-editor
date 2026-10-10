@@ -12533,7 +12533,7 @@ index a0ba01533..7a10fada3 100644
        });
      }
 diff --git a/rhwp-studio/src/engine/input-handler-mouse.ts b/rhwp-studio/src/engine/input-handler-mouse.ts
-index a615c7cbd..4474a92da 100644
+index a615c7cbd..12e62b5ce 100644
 --- a/rhwp-studio/src/engine/input-handler-mouse.ts
 +++ b/rhwp-studio/src/engine/input-handler-mouse.ts
 @@ -441,15 +441,26 @@ export function onClick(this: any, e: MouseEvent): void {
@@ -12565,6 +12565,53 @@ index a615c7cbd..4474a92da 100644
                startPageX: px, startPageY: py,
                lastPageX: px, lastPageY: py,
                totalDeltaH: 0, totalDeltaV: 0,
+@@ -1286,26 +1297,27 @@ export function onClick(this: any, e: MouseEvent): void {
+           }
+           // 글상자 내부 클릭이나 hit_test_native 가 textbox 매칭 안 한 케이스
+           // → 일반 캐럿 배치로 fall-through (글상자 가로채기 제거)
++        } else {
++          // 이미지/방정식/OLE → 객체 선택 (z-order 미지원)
++          this.cursor.clearSelection();
++          this.exitPictureObjectSelectionIfNeeded();
++          this.cursor.enterPictureObjectSelectionDirect(
++            picHit.sec, picHit.ppi, picHit.ci, picHit.type,
++            picHit.cellIdx, picHit.cellParaIdx, (picHit as any).headerFooter,
++            (picHit as any).outerTableControlIdx,
++            (picHit as any).cellPath,
++            (picHit as any).noteRef,
++            (picHit as any).missing,
++            (picHit as any).pageIndex,
++          );
++          this.active = true;
++          this.caret.hide();
++          this.selectionRenderer.clear();
++          this.renderPictureObjectSelection();
++          this.eventBus.emit('picture-object-selection-changed', true);
++          this.textarea.focus();
++          return;
+         }
+-        // 이미지/방정식/OLE → 객체 선택 (z-order 미지원)
+-        this.cursor.clearSelection();
+-        this.exitPictureObjectSelectionIfNeeded();
+-        this.cursor.enterPictureObjectSelectionDirect(
+-          picHit.sec, picHit.ppi, picHit.ci, picHit.type,
+-          picHit.cellIdx, picHit.cellParaIdx, (picHit as any).headerFooter,
+-          (picHit as any).outerTableControlIdx,
+-          (picHit as any).cellPath,
+-          (picHit as any).noteRef,
+-          (picHit as any).missing,
+-          (picHit as any).pageIndex,
+-        );
+-        this.active = true;
+-        this.caret.hide();
+-        this.selectionRenderer.clear();
+-        this.renderPictureObjectSelection();
+-        this.eventBus.emit('picture-object-selection-changed', true);
+-        this.textarea.focus();
+-        return;
+       }
+     }
+ 
 diff --git a/src/renderer/typeset/table/block/entry.rs b/src/renderer/typeset/table/block/entry.rs
 index 133757d01..4a177f571 100644
 --- a/src/renderer/typeset/table/block/entry.rs
@@ -12849,7 +12896,7 @@ index 4a0ede6af..32dac4651 100644
      text_offset: usize,
      after_control: bool,
 diff --git a/src/document_core/queries/cursor_rect.rs b/src/document_core/queries/cursor_rect.rs
-index d4d46931d..8671509ef 100644
+index d4d46931d..9d28845af 100644
 --- a/src/document_core/queries/cursor_rect.rs
 +++ b/src/document_core/queries/cursor_rect.rs
 @@ -1604,7 +1604,7 @@ impl DocumentCore {
@@ -12911,7 +12958,32 @@ index d4d46931d..8671509ef 100644
                  page_num,
                  tb.x + 2.0,
                  tb.y + 2.0,
-@@ -1963,13 +1980,17 @@ impl DocumentCore {
+@@ -1951,6 +1968,24 @@ impl DocumentCore {
+             )
+         }
+ 
++        fn context_inside_textbox(
++            section_index: usize,
++            context: &CellContext,
++            tb: &TextBoxBboxInfo,
++        ) -> bool {
++            section_index == tb.section_index
++                && context.parent_para_index == tb.parent_para_index
++                && context.path.len() >= tb.cell_context.path.len()
++                && tb.cell_context.path.iter().zip(&context.path).enumerate().all(
++                    |(index, (owner, child))| {
++                        owner.control_index == child.control_index
++                            && owner.cell_index == child.cell_index
++                            && (index + 1 == tb.cell_context.path.len()
++                                || owner.cell_para_index == child.cell_para_index)
++                    },
++                )
++        }
++
+         fn text_run_hit_allowed_by_textbox_bbox(
+             run: &RunInfo,
+             textbox_bboxes: &[TextBoxBboxInfo],
+@@ -1963,13 +1998,17 @@ impl DocumentCore {
              let Some(ctx) = run.cell_context.as_ref() else {
                  return false;
              };
@@ -12932,7 +13004,7 @@ index d4d46931d..8671509ef 100644
                      && x >= tb.x
                      && x <= tb.x + tb.w
                      && y >= tb.y
-@@ -2120,23 +2141,24 @@ impl DocumentCore {
+@@ -2120,23 +2159,24 @@ impl DocumentCore {
          // is_textbox 정확 판별: document의 실제 컨트롤 타입으로 재확인
          for run in &mut runs {
              if let Some(ref ctx) = run.cell_context {
@@ -12971,7 +13043,30 @@ index d4d46931d..8671509ef 100644
              } else {
                  run.is_textbox = false;
              }
-@@ -2412,7 +2434,25 @@ impl DocumentCore {
+@@ -2396,10 +2436,22 @@ impl DocumentCore {
+         //  중첩 표에서 외곽 셀의 빈 placeholder TextRun (bbox 가 paragraph 영역 전체) 이
+         //  inner cell 의 실제 TextRun (작은 bbox) 보다 트리 순서상 먼저 매칭되어
+         //  외곽이 선점되던 결함 정정.)
++        let textbox_hit: Option<&TextBoxBboxInfo> = textbox_bboxes
++            .iter()
++            .filter(|tb| x >= tb.x && x <= tb.x + tb.w && y >= tb.y && y <= tb.y + tb.h)
++            .min_by_key(|tb| ((tb.w.max(0.0) * tb.h.max(0.0)) * 1000.0) as i64);
++
+         let mut hit_body: Option<(usize, usize)> = None; // (run_idx, char_offset)
+         let mut hit_cell: Option<(usize, usize)> = None;
+         let mut hit_cell_area: Option<i64> = None;
+         for (i, run) in runs.iter().enumerate() {
++            if textbox_hit.is_some_and(|tb| {
++                !run.cell_context.as_ref().is_some_and(|ctx| {
++                    context_inside_textbox(run.section_index, ctx, tb)
++                })
++            }) {
++                continue;
++            }
+             if !text_run_hit_allowed_by_textbox_bbox(run, &textbox_bboxes, x, y) {
+                 continue;
+             }
+@@ -2412,7 +2464,25 @@ impl DocumentCore {
                  let char_offset = find_char_at_x(&run.char_positions, local_x);
                  if run.cell_context.is_some() {
                      let area = (run.bbox_w.max(0.0) * run.bbox_h.max(0.0) * 1000.0) as i64;
@@ -12998,7 +13093,42 @@ index d4d46931d..8671509ef 100644
                          hit_cell = Some((i, run.char_start + char_offset));
                          hit_cell_area = Some(area);
                      }
-@@ -3454,35 +3494,36 @@ impl DocumentCore {
+@@ -2429,8 +2499,8 @@ impl DocumentCore {
+         //   3. textbox_hit (글상자 안 빈 영역 — 셀 없는 영역)
+         //   4. hit_body (본문 fall-through)
+         //
+-        // 글상자 안 표 셀 (textbox 안 cell) 매칭이 textbox 영역보다 specific 이므로
+-        // clicked_cell 을 textbox_hit 보다 먼저 처리한다.
++        // A table inside the clicked textbox takes priority over its blank area.
++        // Enclosing or unrelated cells must not intercept that textbox.
+ 
+         // 2. 셀 bbox 기반으로 클릭한 셀 판별 (글상자 안 표 셀 포함)
+         // hit_cell 반환 전에 미리 계산한다 — 바깥 칸 run 이 안쪽 칸의 빈 영역·괘선을
+@@ -2439,6 +2509,12 @@ impl DocumentCore {
+             .iter()
+             .filter(|cb| cb.has_meta)
+             .filter(|cb| x >= cb.x && x <= cb.x + cb.w && y >= cb.y && y <= cb.y + cb.h)
++            .filter(|cb| textbox_hit.map_or(true, |tb| {
++                cb.cell_context.as_ref().is_some_and(|ctx| {
++                    ctx.path.len() > tb.cell_context.path.len()
++                        && context_inside_textbox(cb.section_index, ctx, tb)
++                })
++            }))
+             .min_by_key(|cb| ((cb.w.max(0.0) * cb.h.max(0.0)) * 1000.0) as i64);
+ 
+         // [#7442] 중첩 표를 품은 바깥 칸의 run은 TAC 줄 높이만큼 bbox가 커서 안쪽 칸의
+@@ -2566,10 +2642,6 @@ impl DocumentCore {
+         // [Task #919] 글상자 빈 영역 매칭 — clicked_cell 매칭 안 됐으면 글상자 시도.
+         // 글상자 안 표 셀은 위쪽 clicked_cell 분기에서 이미 처리됨.
+         // 후보 여럿이면 가장 작은 (가장 specific) 것 선택.
+-        let textbox_hit: Option<&TextBoxBboxInfo> = textbox_bboxes
+-            .iter()
+-            .filter(|tb| x >= tb.x && x <= tb.x + tb.w && y >= tb.y && y <= tb.y + tb.h)
+-            .min_by_key(|tb| ((tb.w.max(0.0) * tb.h.max(0.0)) * 1000.0) as i64);
+         if let Some(tb) = textbox_hit {
+             return Ok(format_textbox_entry(tb, page_num));
+         }
+@@ -3454,35 +3526,36 @@ impl DocumentCore {
          &self,
          section_idx: usize,
          parent_para_idx: usize,
@@ -13047,7 +13177,7 @@ index d4d46931d..8671509ef 100644
                      result = Some(result.map_or(cp, |prev: usize| prev.max(cp)));
                  }
              }
-@@ -3490,13 +3531,14 @@ impl DocumentCore {
+@@ -3490,13 +3563,14 @@ impl DocumentCore {
          }
  
          // [#4128] 셀이 실제로 걸친 페이지에서만 검색 (target=None: 행/블록 겹침 수준)
@@ -13064,7 +13194,7 @@ index d4d46931d..8671509ef 100644
                  max_para = Some(max_para.map_or(cp, |prev: usize| prev.max(cp)));
              }
          }
-@@ -3551,6 +3593,38 @@ impl DocumentCore {
+@@ -3551,6 +3625,38 @@ impl DocumentCore {
          path_json: &str,
          char_offset: usize,
          hint_page: Option<u32>,
@@ -13103,7 +13233,7 @@ index d4d46931d..8671509ef 100644
      ) -> Result<String, HwpError> {
          use crate::renderer::layout::{CellContext, CellPathEntry};
          use crate::renderer::render_tree::{RenderNode, RenderNodeType};
-@@ -3695,6 +3769,7 @@ impl DocumentCore {
+@@ -3695,6 +3801,7 @@ impl DocumentCore {
              parent_para: usize,
              path: &[(usize, usize, usize)],
              offset: usize,
@@ -13111,7 +13241,7 @@ index d4d46931d..8671509ef 100644
              page: u32,
              current_table_ctx: Option<CellContext>,
              current_cell_ctx: Option<CellContext>,
-@@ -3731,7 +3806,10 @@ impl DocumentCore {
+@@ -3731,7 +3838,10 @@ impl DocumentCore {
                      tr.char_start,
                  ) {
                      let cc = effective_char_count(tr);
@@ -13123,7 +13253,7 @@ index d4d46931d..8671509ef 100644
                          let positions = if tr.char_overlap.is_some() && cc == 1 {
                              vec![0.0, node.bbox.width]
                          } else {
-@@ -3750,7 +3828,11 @@ impl DocumentCore {
+@@ -3750,7 +3860,11 @@ impl DocumentCore {
                              node.bbox.x + xr,
                              node.bbox.y,
                              node.bbox.height,
@@ -13136,7 +13266,7 @@ index d4d46931d..8671509ef 100644
                          ));
                      }
                  }
-@@ -3763,6 +3845,7 @@ impl DocumentCore {
+@@ -3763,6 +3877,7 @@ impl DocumentCore {
                      parent_para,
                      path,
                      offset,
@@ -13144,7 +13274,7 @@ index d4d46931d..8671509ef 100644
                      page,
                      table_ctx.clone(),
                      child_cell_ctx.clone(),
-@@ -3783,6 +3866,7 @@ impl DocumentCore {
+@@ -3783,6 +3898,7 @@ impl DocumentCore {
                  parent_para_idx,
                  &path,
                  char_offset,
@@ -13152,7 +13282,7 @@ index d4d46931d..8671509ef 100644
                  page_num,
                  None,
                  None,
-@@ -3971,6 +4055,11 @@ impl DocumentCore {
+@@ -3971,6 +4087,11 @@ impl DocumentCore {
                      parent_para: usize,
                      path: &[(usize, usize, usize)],
                  ) -> bool {

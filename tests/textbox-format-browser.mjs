@@ -91,7 +91,23 @@ for (const inline of [true, false]) {
   } finally {owner.free();}
 }
 files.unshift(...files.splice(6));
-const data = await createWorkspace(files, path.join(root, 'output')), manifest = path.join(root, 'workspace.json');
+const guardFiles = [], inside = new HwpDocument(await readFile('.cache/rhwp/saved/blank2010.hwp'));
+try {
+  inside.createBlankDocument();
+  const table = JSON.parse(inside.createTableEx(json({sectionIdx: 0, paraIdx: 0, charOffset: 0, rowCount: 1, colCount: 2, treatAsChar: true, colWidths: [9000, 9000], rowHeights: [3000]})));
+  inside.insertTextInCell(0, table.paraIdx, table.controlIdx, 0, 0, 0, 'INSIDE-TABLE');
+  const tableXml = unzip(Buffer.from(inside.exportHwpx())).get('Contents/section0.xml').toString().match(/<hp:tbl\b[\s\S]*?<\/hp:tbl>/)[0];
+  const entries = unzip(await readFile(path.join(root, 'textbox.hwpx')));
+  entries.set('Contents/section0.xml', Buffer.from(entries.get('Contents/section0.xml').toString().replace('<hp:t>BOX-FIRST</hp:t>', tableXml + '<hp:t>BOX-FIRST</hp:t>')));
+  const boxed = new HwpDocument(zip(entries));
+  try {
+    for (const format of ['hwp', 'hwpx']) {
+      const file = path.join(root, 'table-in-box.' + format);
+      await writeFile(file, format === 'hwp' ? boxed.exportHwp() : boxed.exportHwpx()); guardFiles.push(file);
+    }
+  } finally {boxed.free();}
+} finally {inside.free();}
+const data = await createWorkspace([...files, ...guardFiles], path.join(root, 'output')), manifest = path.join(root, 'workspace.json');
 await writeFile(manifest, json(data));
 const port = 18880, base = 'http://127.0.0.1:' + port;
 const child = spawn(process.execPath, ['app/server.mjs'], {env: {...process.env, PORT: String(port), DOCUMENT_MANIFEST: manifest}, stdio: ['ignore', 'pipe', 'pipe']});
@@ -101,25 +117,32 @@ const ready = p => p.waitForFunction(() => window.editorReady, null, {timeout: 4
 const pass = name => {report.checks.push(name); console.log('PASS', name);};
 async function save(page, revision) {await page.getByRole('button', {name: '결과 파일 저장', exact: true}).click(); await page.locator('#delivery[data-revision="' + revision + '"]').waitFor();}
 async function editMenu(frame, label) {await frame.locator('#menu-bar').getByText('편집', {exact: true}).click(); await frame.locator('#menu-bar').getByText(label, {exact: true}).click();}
-async function enter(page, source, text = 'BOX-FIRST') {
+async function enter(page, source, text = 'BOX-FIRST', blank = false) {
   const texts = [];
   for (let index = 0; index < source.pageCount(); index++) {
     const tree = JSON.parse(source.getPageRenderTree(index));
-    function visit(node) {if (node.type === 'TextRun' && node.text === text) texts.push({node, tree, index}); for (const child of node.children || []) visit(child);}
+    function visit(node, ancestors = []) {if (node.type === 'TextRun' && node.text === text) texts.push({node, tree, index, ancestors}); for (const child of node.children || []) visit(child, [...ancestors, node]);}
     visit(tree);
   }
   assert.equal(texts.length, 1);
-  const {node, tree, index} = texts[0], b = node.bbox;
+  const {node, tree, index, ancestors} = texts[0], b = node.bbox;
   assert(b.y >= 0 && b.y + b.h <= tree.bbox.h, 'Textbox text must be visible inside its owning page');
   const canvas = page.frameLocator('#editor iframe').locator('#scroll-container canvas').nth(index);
   const size = await canvas.evaluate(el => ({width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height}));
-  const hit = JSON.parse(source.hitTest(index, b.x + b.w / 2, b.y + b.h / 2));
+  const box = ancestors.findLast(n => n.type === 'TextBox').bbox;
+  const point = {x: blank ? box.x + box.w - 20 : b.x + b.w / 2, y: b.y + b.h / 2};
+  if (blank) {
+    assert(point.x > b.x + b.w, 'The blank click must be outside the text glyphs');
+    for (const cell of ancestors.filter(n => n.type === 'Cell')) assert(point.x >= cell.bbox.x && point.x <= cell.bbox.x + cell.bbox.w && point.y >= cell.bbox.y && point.y <= cell.bbox.y + cell.bbox.h, 'The blank click must stay inside every enclosing cell');
+  }
+  const hit = JSON.parse(source.hitTest(index, point.x, point.y));
   assert.equal(hit.isTextBox, true, 'The rendered textbox text must resolve to its own container');
+  assert.equal(ancestors.filter(n => n.type === 'Cell').length, hit.cellPath.length - 1, 'The hit must retain every enclosing cell');
   assert.equal(source.getTextInCellByPath(0, hit.parentParaIndex, json(hit.cellPath), 0, 100), text);
   const caret = JSON.parse(source.getCursorRectByPath(0, hit.parentParaIndex, json(hit.cellPath), hit.charOffset));
   assert.equal(caret.pageIndex, index);
   assert(caret.x >= b.x - 1 && caret.x <= b.x + b.w + 1, 'The complete textbox path must resolve its rendered caret');
-  await canvas.dblclick({position: {x: (b.x + b.w / 2) * size.width / tree.bbox.w, y: (b.y + b.h / 2) * size.height / tree.bbox.h}});
+  await canvas.dblclick({position: {x: point.x * size.width / tree.bbox.w, y: point.y * size.height / tree.bbox.h}});
 }
 function verify(source, result, changed, selected = [0], depth = 1, continued = false, alignment = 'center') {
   assert.equal(result.getTextFileUnicode(true), source.getTextFileUnicode(true));
@@ -156,17 +179,17 @@ try {
   browser = await chromium.launch({headless: true, executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH || undefined});
   const context = await browser.newContext({viewport: {width: 1280, height: 1050}});
   context.on('page', p => {p.on('pageerror', e => report.errors.push(e.message)); p.on('console', m => {if (['warning', 'error'].includes(m.type())) report.warnings.push(m.text());}); p.on('request', r => {if (!r.url().startsWith(base + '/') && !/^(blob|data):/.test(r.url())) report.externalRequests.push(r.url());});});
-  for (const entry of data.documents) {
+  for (const entry of data.documents.filter(e => !e.name.startsWith('table-in-box.'))) {
     const source = new HwpDocument(await readFile(entry.source)), page = await context.newPage(), frame = page.frameLocator('#editor iframe'), continued = entry.name.startsWith('continued-'), depth = continued ? 2 : Number(entry.source.match(/depth-(\d)/)?.[1] ?? 1);
     const verifyEntry = (changed, selected, alignment) => verify(source, result, changed, selected, depth, continued, alignment);
     let result;
     try {
-      await page.goto(base + '/editor?id=' + entry.id); await ready(page); await enter(page, source);
+      await page.goto(base + '/editor?id=' + entry.id); await ready(page); await enter(page, source, 'BOX-FIRST', true);
       await frame.getByRole('textbox', {name: '문서 편집 입력', exact: true}).press('ArrowRight');
       await frame.getByRole('button', {name: '가운데 정렬', exact: true}).click(); await save(page, 1);
       result = new HwpDocument(await readFile(entry.output));
       try {verifyEntry(true);} finally {result.free();}
-      pass(entry.name + ' textbox caret changes its paragraph alignment only');
+      pass(entry.name + ' blank-area entry changes its textbox paragraph alignment only');
       await editMenu(frame, '되돌리기'); await save(page, 2);
       result = new HwpDocument(await readFile(entry.output)); try {verifyEntry(false);} finally {result.free();}
       await editMenu(frame, '다시 실행');
@@ -213,6 +236,40 @@ try {
       result = new HwpDocument(await readFile(entry.output));
       try {verifyEntry(true, [0, 1], 'left'); assert.equal(digest(await readFile(entry.source)), entry.sourceSha256); const receipt = JSON.parse(await readFile(entry.output + '.receipt.json')); assert.equal(receipt.outputSha256, digest(await readFile(entry.output))); assert.equal(receipt.contentLoss.count, 0);} finally {result.free();}
       pass(entry.name + ' backward navigation format undo, redo, recovery and disk reopening');
+    } finally {source.free(); await page.close();}
+  }
+  for (const entry of data.documents.filter(e => e.name.startsWith('table-in-box.'))) {
+    const source = new HwpDocument(await readFile(entry.source)), page = await context.newPage(), frame = page.frameLocator('#editor iframe');
+    try {
+      const tree = JSON.parse(source.getPageRenderTree(0)), cells = [];
+      function visit(node, inBox = false) {const boxed = inBox || node.type === 'TextBox'; if (boxed && node.type === 'Cell') cells.push(node); for (const child of node.children || []) visit(child, boxed);}
+      visit(tree); assert.equal(cells.length, 2);
+      const box = cells[1].bbox, point = {x: box.x + box.w / 2, y: box.y + box.h / 2};
+      const hit = JSON.parse(source.hitTest(0, point.x, point.y));
+      assert.equal(hit.isTextBox, undefined, 'An empty table cell inside a textbox must remain a table cell');
+      assert.equal(hit.parentParaIndex, 1); assert.equal(hit.cellPath.length, 2); assert.equal(hit.cellPath[1].cellIndex, 1);
+      await page.goto(base + '/editor?id=' + entry.id); await ready(page);
+      const canvas = frame.locator('#scroll-container canvas').first(), size = await canvas.evaluate(el => ({width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height}));
+      await canvas.click({position: {x: point.x * size.width / tree.bbox.w, y: point.y * size.height / tree.bbox.h}});
+      await frame.getByRole('textbox', {name: '문서 편집 입력', exact: true}).pressSequentially('EMPTY-EDIT'); await save(page, 1);
+      async function verifyGuard(edited) {
+        const result = new HwpDocument(await readFile(entry.output));
+        try {
+          assert.equal(result.getTextInCellByPath(0, 1, json(hit.cellPath), 0, 100), edited ? 'EMPTY-EDIT' : '');
+          assert.equal(JSON.parse(result.getTextFileUnicode(true)).replace('EMPTY-EDIT', ''), JSON.parse(source.getTextFileUnicode(true)));
+          assert.equal(result.getShapeProperties(0, 1, 0), source.getShapeProperties(0, 1, 0));
+          assert.equal(result.getTablePropertiesByPath(0, 1, json(hit.cellPath)), source.getTablePropertiesByPath(0, 1, json(hit.cellPath)));
+          for (const cell of [0, 1]) assert.equal(result.getCellPropertiesByPath(0, 1, json(hit.cellPath), cell), source.getCellPropertiesByPath(0, 1, json(hit.cellPath), cell));
+          assert.equal(digest(await readFile(entry.source)), entry.sourceSha256); const receipt = JSON.parse(await readFile(entry.output + '.receipt.json')); assert.equal(receipt.outputSha256, digest(await readFile(entry.output))); assert.equal(receipt.contentLoss.count, 0);
+        } finally {result.free();}
+      }
+      await verifyGuard(true); await editMenu(frame, '되돌리기'); await save(page, 2); await verifyGuard(false);
+      await editMenu(frame, '다시 실행');
+      await page.waitForFunction(() => {const revision = localStudio.element.contentWindow.rhwpStudio.localRecovery.read(Number.MAX_SAFE_INTEGER).revision; return revision > 0 && revision === Number(document.querySelector('#status').dataset.savedRevision);});
+      await page.reload(); await ready(page); await save(page, 3); await verifyGuard(true);
+      pass(entry.name + ' empty-cell typing undo, redo and journal recovery retain the inner table');
+      await page.goto(base + '/editor?id=' + entry.id + '&result=1'); await ready(page); await verifyGuard(true);
+      pass(entry.name + ' empty-cell typing inside a textbox keeps its nested table path after save and reopening');
     } finally {source.free(); await page.close();}
   }
   assert.deepEqual(report.errors, []); assert.deepEqual(report.warnings, []); assert.deepEqual(report.externalRequests, []); pass('No browser errors, warnings or external requests');
