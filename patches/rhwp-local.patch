@@ -13805,7 +13805,7 @@ index d4d46931d..9d28845af 100644
                          return tr.cell_context.as_ref().map_or(false, |ctx| {
                              ctx.parent_para_index == parent_para
 diff --git a/rhwp-studio/src/ui/picture-props-dialog.ts b/rhwp-studio/src/ui/picture-props-dialog.ts
-index 0f3466ce9..041843de7 100644
+index 0f3466ce9..31db0a448 100644
 --- a/rhwp-studio/src/ui/picture-props-dialog.ts
 +++ b/rhwp-studio/src/ui/picture-props-dialog.ts
 @@ -457,6 +457,7 @@ export class PicturePropsDialog {
@@ -13824,7 +13824,55 @@ index 0f3466ce9..041843de7 100644
      this.sizeLockControls.push(this.heightInput);
      hRow.appendChild(this.heightInput);
      hRow.appendChild(this.unit('mm'));
-@@ -1254,10 +1256,12 @@ export class PicturePropsDialog {
+@@ -857,6 +859,7 @@ export class PicturePropsDialog {
+     const row1 = this.row();
+     row1.appendChild(this.label(i18nText('dialog.pictureProps.label.label.xb7d4ad')));
+     this.lineColorInput = this.colorInput('#000000');
++    this.lineColorInput.setAttribute('aria-label', '선 색');
+     row1.appendChild(this.lineColorInput);
+     row1.appendChild(this.label(i18nText('dialog.pictureProps.label.label.x169f35')));
+     // HWP 선 종류: attr bits 0-5 (0~17)
+@@ -865,6 +868,7 @@ export class PicturePropsDialog {
+       ['4', i18nText('dialog.pictureProps.selectEl.label.xcff873')], ['5', i18nText('dialog.pictureProps.buildLinePanel.label')], ['6', i18nText('dialog.pictureProps.buildLinePanel.label.x951654')], ['7', i18nText('dialog.pictureProps.buildLinePanel.label.xf82fe5')],
+       ['8', i18nText('dialog.pictureProps.buildLinePanel.label.x7708ea')], ['9', i18nText('dialog.pictureProps.buildLinePanel.label.xcaa098')], ['10', i18nText('dialog.pictureProps.buildLinePanel.label.xfb6f60')], ['11', i18nText('dialog.pictureProps.buildLinePanel.label.xa3d9ea')],
+     ]);
++    this.lineTypeSelect.setAttribute('aria-label', '선 종류');
+     row1.appendChild(this.lineTypeSelect);
+     lineFs.appendChild(row1);
+ 
+@@ -877,6 +881,7 @@ export class PicturePropsDialog {
+     row2.appendChild(this.lineEndSelect);
+     row2.appendChild(this.label(i18nText('dialog.pictureProps.label.label.xb55042')));
+     this.lineWidthInput = this.numberInput(0, undefined, 0.01);
++    this.lineWidthInput.setAttribute('aria-label', '선 굵기(mm)');
+     this.lineWidthInput.value = '0.12';
+     row2.appendChild(this.lineWidthInput);
+     row2.appendChild(this.unit('mm'));
+@@ -1022,6 +1027,7 @@ export class PicturePropsDialog {
+     noneLabel.className = 'dialog-checkbox';
+     this.fillNoneRadio = document.createElement('input');
+     this.fillNoneRadio.type = 'radio';
++    this.fillNoneRadio.setAttribute('aria-label', '채우기 없음');
+     this.fillNoneRadio.name = radioName;
+     this.fillNoneRadio.checked = true;
+     noneLabel.appendChild(this.fillNoneRadio);
+@@ -1035,6 +1041,7 @@ export class PicturePropsDialog {
+     this.fillSolidRadio = document.createElement('input');
+     this.fillSolidRadio.type = 'radio';
+     this.fillSolidRadio.name = radioName;
++    this.fillSolidRadio.setAttribute('aria-label', '단색 채우기');
+     solidLabel.appendChild(this.fillSolidRadio);
+     solidLabel.appendChild(document.createTextNode(i18nText('dialog.pictureProps.buildFillPanel.text.x42d477')));
+ 
+@@ -1047,6 +1054,7 @@ export class PicturePropsDialog {
+     const sRow = this.row();
+     sRow.appendChild(this.label(i18nText('dialog.pictureProps.label.label.x707821')));
+     this.solidFaceColor = this.colorInput('#ffffff');
++    this.solidFaceColor.setAttribute('aria-label', '채우기 면 색');
+     sRow.appendChild(this.solidFaceColor);
+     sRow.appendChild(this.label(i18nText('dialog.pictureProps.label.label.x8e4aef')));
+     this.solidPatColor = this.colorInput('#000000');
+@@ -1254,10 +1262,12 @@ export class PicturePropsDialog {
      const lRow = this.row();
      lRow.appendChild(this.label(i18nText('dialog.pictureProps.label.label.x9b6417')));
      this.tbMarginLeftInput = this.numberInput(0);
@@ -13837,7 +13885,7 @@ index 0f3466ce9..041843de7 100644
      lRow.appendChild(this.tbMarginTopInput);
      lRow.appendChild(this.unit('mm'));
      // 모두(A) 동기 스피너
-@@ -1277,10 +1281,12 @@ export class PicturePropsDialog {
+@@ -1277,10 +1287,12 @@ export class PicturePropsDialog {
      const rRow = this.row();
      rRow.appendChild(this.label(i18nText('dialog.pictureProps.label.label.xeac67d')));
      this.tbMarginRightInput = this.numberInput(0);
