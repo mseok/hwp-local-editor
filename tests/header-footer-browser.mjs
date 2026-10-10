@@ -5,6 +5,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import {createWorkspace, digest} from '../app/workspace.mjs';
 import {initSync, HwpDocument} from '../.build/core/rhwp.js';
+import {unzip} from './zip-fixture.mjs';
 
 const require = createRequire(process.env.PLAYWRIGHT_PACKAGE_PATH || import.meta.url), {chromium} = require('playwright');
 await mkdir('test-results', {recursive: true});
@@ -135,6 +136,18 @@ try {
       await closeHeader(frame);
       await save(page, 7 + undone); await check('HEADER-EDITED 2026 확인', 'FOOTER-NEW-KEEP', 1400, 200);
       pass(entry.name + ' header line spacing changed through 문단 모양 keeps the header text and size');
+      await enterFooter(frame);
+      await input.press('End');
+      await frame.getByRole('button', {name: '쪽 번호 삽입', exact: true}).click();
+      await closeHeader(frame);
+      await save(page, 8 + undone); await check('HEADER-EDITED 2026 확인', 'FOOTER-NEW-KEEP ', 1400, 200);
+      const withField = new HwpDocument(await readFile(entry.output));
+      try {
+        const xml = unzip(Buffer.from(withField.exportHwpx())).get('Contents/section0.xml').toString();
+        assert.match(xml, /<hp:autoNum[^>]*numType="PAGE"/, 'the saved footer must keep a page-number field');
+        assert.equal((xml.match(/<hp:autoNum[^>]*numType="PAGE"/g) || []).length, 1);
+      } finally {withField.free();}
+      pass(entry.name + ' page-number field inserted in the footer survives saving and reopening');
     } finally {source.free(); await page.close();}
   }
   assert.deepEqual(report.errors, []); assert.deepEqual(report.warnings, []); assert.deepEqual(report.externalRequests, []);

@@ -12489,7 +12489,7 @@ index 7fd48f994..e855c1d4c 100755
      if (copyHeaderFooterSelection.call(this, e)) this.deleteSelection();
      return;
 diff --git a/rhwp-studio/index.html b/rhwp-studio/index.html
-index 16f230b54..88d83d668 100644
+index 16f230b54..07477f7c3 100644
 --- a/rhwp-studio/index.html
 +++ b/rhwp-studio/index.html
 @@ -391,6 +391,9 @@
@@ -12502,7 +12502,7 @@ index 16f230b54..88d83d668 100644
            <div class="md-item disabled" data-cmd="table:cell-height-equal"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.cellHeightEqual.label">셀 높이를 같게</span><span class="md-shortcut">H</span></div>
            <div class="md-item disabled" data-cmd="table:cell-width-equal"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.cellWidthEqual.label">셀 너비를 같게</span><span class="md-shortcut">W</span></div>
            <div class="md-item disabled" data-cmd="table:transpose-copy"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.transposeCopy.label">행/열 바꿈 복사</span></div>
-@@ -497,7 +500,7 @@
+@@ -497,12 +500,12 @@
          <button class="tb-btn" data-cmd="page:headerfooter-prev" title="이전" data-i18n-title="command.page.headerfooterPrev.tooltip"><span class="tb-icon-text">◀</span><span class="tb-label" data-i18n="command.page.headerfooterPrev.toolbarLabel">이전</span></button>
          <button class="tb-btn" data-cmd="page:headerfooter-next" title="다음" data-i18n-title="command.page.headerfooterNext.tooltip"><span class="tb-icon-text">▶</span><span class="tb-label" data-i18n="command.page.headerfooterNext.toolbarLabel">다음</span></button>
          <span class="tb-sep"></span>
@@ -12510,7 +12510,15 @@ index 16f230b54..88d83d668 100644
 +        <button class="tb-btn" data-cmd="page:headerfooter-close" aria-label="머리말/꼬리말 닫기" title="닫기" data-i18n-title="command.page.headerfooterClose.tooltip"><span class="tb-icon-text">✕</span><span class="tb-label" data-i18n="command.page.headerfooterClose.toolbarLabel">닫기</span></button>
          <button class="tb-btn tb-hf-delete" data-cmd="page:headerfooter-delete" title="지우기" data-i18n-title="command.page.headerfooterDelete.tooltip"><span class="tb-icon-text">🗑</span><span class="tb-label" data-i18n="command.page.headerfooterDelete.toolbarLabel">지우기</span></button>
          <span class="tb-sep"></span>
-         <button class="tb-btn" data-cmd="page:insert-field-pagenum" title="쪽 번호 삽입" data-i18n-title="command.page.insertFieldPagenum.tooltip"><span class="tb-icon-text">#</span><span class="tb-label" data-i18n="command.page.insertFieldPagenum.toolbarLabel">쪽번호</span></button>
+-        <button class="tb-btn" data-cmd="page:insert-field-pagenum" title="쪽 번호 삽입" data-i18n-title="command.page.insertFieldPagenum.tooltip"><span class="tb-icon-text">#</span><span class="tb-label" data-i18n="command.page.insertFieldPagenum.toolbarLabel">쪽번호</span></button>
+-        <button class="tb-btn" data-cmd="page:insert-field-totalpage" title="총 쪽수 삽입" data-i18n-title="command.page.insertFieldTotalpage.tooltip"><span class="tb-icon-text">##</span><span class="tb-label" data-i18n="command.page.insertFieldTotalpage.toolbarLabel">총쪽수</span></button>
+-        <button class="tb-btn" data-cmd="page:insert-field-filename" title="파일 이름 삽입" data-i18n-title="command.page.insertFieldFilename.tooltip"><span class="tb-icon-text">F</span><span class="tb-label" data-i18n="command.page.insertFieldFilename.toolbarLabel">파일명</span></button>
++        <button class="tb-btn" data-cmd="page:insert-field-pagenum" aria-label="쪽 번호 삽입" title="쪽 번호 삽입" data-i18n-title="command.page.insertFieldPagenum.tooltip"><span class="tb-icon-text">#</span><span class="tb-label" data-i18n="command.page.insertFieldPagenum.toolbarLabel">쪽번호</span></button>
++        <button class="tb-btn" data-cmd="page:insert-field-totalpage" aria-label="총 쪽수 삽입" title="총 쪽수 삽입" data-i18n-title="command.page.insertFieldTotalpage.tooltip"><span class="tb-icon-text">##</span><span class="tb-label" data-i18n="command.page.insertFieldTotalpage.toolbarLabel">총쪽수</span></button>
++        <button class="tb-btn" data-cmd="page:insert-field-filename" aria-label="파일 이름 삽입" title="파일 이름 삽입" data-i18n-title="command.page.insertFieldFilename.tooltip"><span class="tb-icon-text">F</span><span class="tb-label" data-i18n="command.page.insertFieldFilename.toolbarLabel">파일명</span></button>
+       </div>
+       <!-- 주석 편집 모드 전용 도구상자 (숨김) -->
+       <div class="tb-group tb-mode-group tb-note-group" hidden>
 diff --git a/rhwp-studio/src/core/mutation-method-registry.ts b/rhwp-studio/src/core/mutation-method-registry.ts
 index 2d05c75e1..d2fcb05a1 100755
 --- a/rhwp-studio/src/core/mutation-method-registry.ts
