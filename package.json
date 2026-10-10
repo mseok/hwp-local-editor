@@ -22,6 +22,7 @@
     "test:header-footer": "node tests/header-footer-browser.mjs",
     "test:textbox-props": "node tests/textbox-props-browser.mjs",
     "test:nested-continued": "node tests/nested-continued-browser.mjs",
+    "test:textbox-overflow": "node tests/textbox-overflow-browser.mjs",
     "test:special-object": "node tests/special-object-browser.mjs",
     "test:nested": "node tests/nested-browser.mjs",
     "test:table-split": "node tests/table-split-browser.mjs",
