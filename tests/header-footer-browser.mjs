@@ -35,6 +35,7 @@ const ready = p => p.waitForFunction(() => window.editorReady, null, {timeout: 4
 const pass = name => {report.checks.push(name); console.log('PASS', name);};
 async function save(page, revision) {await page.getByRole('button', {name: '결과 파일 저장', exact: true}).click(); await page.locator('#delivery[data-revision="' + revision + '"]').waitFor();}
 async function menu(frame, title, label) {await frame.locator('#menu-bar .menu-title').filter({hasText: title}).click(); await frame.locator('#menu-bar').getByText(label, {exact: true}).click();}
+async function enterFooter(frame) {await frame.getByRole('button', {name: '꼬리말', exact: true}).click(); await frame.getByRole('button', {name: '머리말/꼬리말 닫기', exact: true}).waitFor({timeout: 5000});}
 async function enterHeader(frame) {await frame.getByRole('button', {name: '머리말', exact: true}).click(); await frame.getByRole('button', {name: '머리말/꼬리말 닫기', exact: true}).waitFor({timeout: 5000});}
 async function closeHeader(frame) {await frame.getByRole('button', {name: '머리말/꼬리말 닫기', exact: true}).click();}
 const read = doc => ({
@@ -43,11 +44,12 @@ const read = doc => ({
   bodyChar: doc.getCharPropertiesAt(0, 0, 0), bodyPara: doc.getParaPropertiesAt(0, 0), secondChar: doc.getCharPropertiesAt(0, 1, 0),
   headerChar: doc.getCharPropertiesInHeaderFooter(0, true, 0, 0, 0), headerPara: doc.getParaPropertiesInHf(0, true, 0, 0),
 });
-function verify(source, result, headerText) {
+function verify(source, result, headerText, footerText = 'FOOTER-KEEP') {
   const before = read(source), after = read(result);
   assert.equal(after.header.text, headerText);
   assert.deepEqual({...after.header, text: undefined}, {...before.header, text: undefined}, 'header control identity must stay');
-  assert.deepEqual(after.footer, before.footer, 'footer must stay untouched');
+  assert.equal(after.footer.text, footerText);
+  assert.deepEqual({...after.footer, text: undefined}, {...before.footer, text: undefined}, 'footer control identity must stay');
   for (const key of ['text', 'pages', 'pageDef', 'bodyChar', 'bodyPara', 'secondChar', 'headerChar', 'headerPara']) assert.equal(after[key], before[key], key + ' must stay untouched');
 }
 try {
@@ -57,7 +59,7 @@ try {
   context.on('page', page => {page.on('pageerror', error => report.errors.push(error.message)); page.on('console', message => {if (['warning', 'error'].includes(message.type())) report.warnings.push(message.text());}); page.on('request', request => {if (!request.url().startsWith(base)) report.externalRequests.push(request.url());});});
   for (const entry of data.documents) {
     const source = new HwpDocument(await readFile(entry.source)), page = await context.newPage(), frame = page.frameLocator('#editor iframe');
-    const check = async (headerText) => {const saved = new HwpDocument(await readFile(entry.output)); try {verify(source, saved, headerText);} finally {saved.free();}};
+    const check = async (headerText, footerText) => {const saved = new HwpDocument(await readFile(entry.output)); try {verify(source, saved, headerText, footerText);} finally {saved.free();}};
     const input = frame.getByRole('textbox', {name: '문서 편집 입력', exact: true});
     try {
       await page.goto(base + '/editor?id=' + entry.id); await ready(page);
@@ -92,6 +94,13 @@ try {
       const receipt = JSON.parse(await readFile(entry.output + '.receipt.json'));
       assert.equal(receipt.outputSha256, digest(await readFile(entry.output))); assert.equal(receipt.contentLoss.count, 0);
       pass(entry.name + ' reopened result accepts a further header edit and keeps source and receipt hashes');
+      await enterFooter(frame);
+      await input.press('Home');
+      for (let i = 0; i < 'FOOTER'.length; i++) await input.press('Shift+ArrowRight');
+      await input.pressSequentially('FOOTER-NEW');
+      await closeHeader(frame);
+      await save(page, 5 + undone); await check('HEADER-EDITED 2026 확인', 'FOOTER-NEW-KEEP');
+      pass(entry.name + ' footer text replaced through 꼬리말 keeps the edited header and the body');
     } finally {source.free(); await page.close();}
   }
   assert.deepEqual(report.errors, []); assert.deepEqual(report.warnings, []); assert.deepEqual(report.externalRequests, []);
