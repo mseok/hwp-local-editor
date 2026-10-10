@@ -16,6 +16,7 @@ const innerPath = [{controlIndex: 0, cellIndex: 0, cellParaIndex: 0}, {controlIn
 const keepPath = [{controlIndex: 0, cellIndex: 0, cellParaIndex: 0}, {controlIndex: 0, cellIndex: 1, cellParaIndex: 0}];
 const outerPath = [{controlIndex: 0, cellIndex: 0, cellParaIndex: 0}];
 const outerKeepPath = [{controlIndex: 0, cellIndex: 1, cellParaIndex: 0}];
+const boxPath = [{controlIndex: 0, cellIndex: 0, cellParaIndex: 0}], boxKeepPath = [{controlIndex: 0, cellIndex: 0, cellParaIndex: 1}];
 const files = [];
 {
   const owner = new HwpDocument(blank), inner = new HwpDocument(blank);
@@ -41,6 +42,23 @@ const files = [];
       }
     } finally {nested.free();}
   } finally {owner.free(); inner.free();}
+}
+{
+  const owner = new HwpDocument(blank);
+  try {
+    owner.createBlankDocument(); owner.insertText(0, 0, 0, 'BODY-TARGET'); owner.splitParagraph(0, 0, 'BODY-TARGET'.length);
+    owner.insertText(0, 1, 0, 'BODY-KEEP'); owner.splitParagraph(0, 1, 'BODY-KEEP'.length);
+    owner.insertText(0, 2, 0, 'HOST-KEEP'); owner.splitParagraph(0, 2, 'HOST-KEEP'.length);
+    const shape = JSON.parse(owner.createShapeControl(json({sectionIdx: 0, paraIdx: 2, charOffset: 0, width: 30000, height: 10000, treatAsChar: true, shapeType: 'textbox', horzOffset: 0, vertOffset: 0})));
+    assert.equal(shape.paraIdx, 2); assert.equal(shape.controlIdx, 0);
+    owner.insertTextInCell(0, 2, 0, 0, 0, 0, 'BOX-TARGET');
+    owner.splitParagraphInCell(0, 2, 0, 0, 0, 'BOX-TARGET'.length); owner.insertTextInCell(0, 2, 0, 0, 1, 0, 'BOX-KEEP');
+    assert.equal(owner.getTextInCellByPath(0, 2, json(boxPath), 0, 100), 'BOX-TARGET');
+    for (const format of ['hwp', 'hwpx']) {
+      const file = path.join(root, 'text-shape-box.' + format);
+      await writeFile(file, format === 'hwp' ? owner.exportHwp() : owner.exportHwpx()); files.push(file);
+    }
+  } finally {owner.free();}
 }
 const data = await createWorkspace(files, path.join(root, 'output')), manifest = path.join(root, 'workspace.json');
 await writeFile(manifest, json(data));
@@ -84,9 +102,51 @@ async function setLineSpacing(frame, percent) {
   await input.fill(String(percent));
   await dialog.getByRole('button', {name: '설정(D)', exact: true}).click();
 }
+// Page canvases are recycled after layout changes, so pick the canvas by vertical position.
+async function pageCanvas(frame, index) {
+  const canvases = frame.locator('#scroll-container canvas');
+  const order = await canvases.evaluateAll(elements => elements.map((element, position) => ({position, top: parseFloat(element.style.top)})).sort((a, b) => a.top - b.top).map(entry => entry.position));
+  assert(index < order.length, 'The requested page must have a rendered canvas');
+  return canvases.nth(order[index]);
+}
+async function selectBoxText(page, frame, source, text) {
+  const texts = [];
+  for (let index = 0; index < source.pageCount(); index++) {
+    const tree = JSON.parse(source.getPageRenderTree(index));
+    (function visit(node, ancestors = []) {if (node.type === 'TextRun' && node.text === text) texts.push({node, tree, index, ancestors}); for (const child of node.children || []) visit(child, [...ancestors, node]);})(tree);
+  }
+  assert.equal(texts.length, 1);
+  const {node, tree, index, ancestors} = texts[0], b = node.bbox;
+  assert(ancestors.some(n => n.type === 'TextBox'), 'The target must be rendered inside a text box');
+  const canvas = await pageCanvas(frame, index);
+  const size = await canvas.evaluate(el => ({width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height}));
+  await canvas.dblclick({position: {x: (b.x + b.w / 2) * size.width / tree.bbox.w, y: (b.y + b.h / 2) * size.height / tree.bbox.h}});
+  const input = frame.getByRole('textbox', {name: '문서 편집 입력', exact: true});
+  await input.press('Home');
+  for (let i = 0; i < text.length; i++) await input.press('Shift+ArrowRight');
+}
 const charKeys = ['fontFamily', 'fontFamilies', 'fontSize', 'charShapeId', 'fontId', 'fontIds', 'borderFillId'];
 const paraKeys = ['lineSpacing', 'paraShapeId', 'borderFillId'];
 const strip = (props, keys) => {const copy = {...props}; for (const key of keys) delete copy[key]; return copy;};
+const readBox = doc => ({
+  bodyChar: JSON.parse(doc.getCharPropertiesAt(0, 0, 0)), bodyPara: JSON.parse(doc.getParaPropertiesAt(0, 0)),
+  bodyKeepChar: JSON.parse(doc.getCharPropertiesAt(0, 1, 0)), bodyKeepPara: JSON.parse(doc.getParaPropertiesAt(0, 1)),
+  hostChar: JSON.parse(doc.getCharPropertiesAt(0, 2, 1)), hostPara: JSON.parse(doc.getParaPropertiesAt(0, 2)),
+  boxChar: JSON.parse(doc.getCellCharPropertiesAtByPath(0, 2, json(boxPath), 0)), boxPara: JSON.parse(doc.getCellParaPropertiesAtByPath(0, 2, json(boxPath))),
+  boxKeepChar: JSON.parse(doc.getCellCharPropertiesAtByPath(0, 2, json(boxKeepPath), 0)), boxKeepPara: JSON.parse(doc.getCellParaPropertiesAtByPath(0, 2, json(boxKeepPath))),
+  shape: doc.getShapeProperties(0, 2, 0), text: doc.getTextFileUnicode(true), pages: doc.pageCount(),
+});
+function verifyBox(source, result, expected) {
+  const before = readBox(source), after = readBox(result);
+  assert.equal(after.text, before.text); assert.equal(after.pages, before.pages); assert.equal(after.shape, before.shape);
+  for (const key of ['bodyKeepChar', 'hostChar', 'boxKeepChar', 'bodyChar']) assert.deepEqual(after[key], before[key], key + ' must stay untouched');
+  for (const key of ['bodyKeepPara', 'hostPara', 'boxKeepPara', 'bodyPara']) assert.deepEqual(after[key], before[key], key + ' must stay untouched');
+  assert.deepEqual(strip(after.boxChar, charKeys), strip(before.boxChar, charKeys), 'boxChar must keep its other character properties');
+  if (expected.boxChar) {assert.equal(after.boxChar.fontSize, expected.boxChar.fontSize); assert.equal(after.boxChar.fontFamily, expected.boxChar.font); assert.equal(after.boxChar.fontFamilies[0], expected.boxChar.font);}
+  else {assert.equal(after.boxChar.fontSize, before.boxChar.fontSize); assert.deepEqual(after.boxChar.fontFamilies, before.boxChar.fontFamilies);}
+  assert.deepEqual(strip(after.boxPara, paraKeys), strip(before.boxPara, paraKeys), 'boxPara must keep its other paragraph properties');
+  assert.equal(after.boxPara.lineSpacing, expected.boxPara ? expected.boxPara.lineSpacing : before.boxPara.lineSpacing);
+}
 const read = doc => ({
   bodyChar: JSON.parse(doc.getCharPropertiesAt(0, 0, 0)), bodyPara: JSON.parse(doc.getParaPropertiesAt(0, 0)),
   bodyKeepChar: JSON.parse(doc.getCharPropertiesAt(0, 1, 0)), bodyKeepPara: JSON.parse(doc.getParaPropertiesAt(0, 1)),
@@ -120,7 +180,30 @@ try {
   browser = await chromium.launch({headless: true, executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH || undefined});
   const context = await browser.newContext({viewport: {width: 1280, height: 1050}});
   context.on('page', page => {page.on('pageerror', error => report.errors.push(error.message)); page.on('console', message => {if (['warning', 'error'].includes(message.type())) report.warnings.push(message.text());}); page.on('request', request => {if (!request.url().startsWith(base)) report.externalRequests.push(request.url());});});
-  for (const entry of data.documents) {
+  for (const entry of data.documents.filter(e => e.name.startsWith('text-shape-box.'))) {
+    const source = new HwpDocument(await readFile(entry.source)), page = await context.newPage(), frame = page.frameLocator('#editor iframe');
+    const check = async (expected) => {const saved = new HwpDocument(await readFile(entry.output)); try {verifyBox(source, saved, expected);} finally {saved.free();}};
+    try {
+      await page.goto(base + '/editor?id=' + entry.id); await ready(page);
+      await selectBoxText(page, frame, source, 'BOX-TARGET');
+      const font = await setCharShape(frame, {font: true, size: 14});
+      await save(page, 1); await check({boxChar: {font, fontSize: 1400}});
+      pass(entry.name + ' text-box font and size change through 글자 모양 preserves the host, body and second box paragraph');
+      await selectBoxText(page, frame, source, 'BOX-TARGET'); await setLineSpacing(frame, 200);
+      await save(page, 2); await check({boxChar: {font, fontSize: 1400}, boxPara: {lineSpacing: 200}});
+      pass(entry.name + ' text-box line spacing through 문단 모양 keeps the other box paragraph');
+      await editMenu(frame, '되돌리기'); await editMenu(frame, '되돌리기'); await save(page, 3); await check({});
+      await editMenu(frame, '다시 실행'); await editMenu(frame, '다시 실행');
+      await page.waitForFunction(() => {const revision = localStudio.element.contentWindow.rhwpStudio.localRecovery.read(Number.MAX_SAFE_INTEGER).revision; return revision > 0 && revision === Number(document.querySelector('#status').dataset.savedRevision);});
+      await page.reload(); await ready(page); await save(page, 4); await check({boxChar: {font, fontSize: 1400}, boxPara: {lineSpacing: 200}});
+      await page.goto(base + '/editor?id=' + entry.id + '&result=1'); await ready(page); await check({boxChar: {font, fontSize: 1400}, boxPara: {lineSpacing: 200}});
+      assert.equal(digest(await readFile(entry.source)), entry.sourceSha256);
+      const receipt = JSON.parse(await readFile(entry.output + '.receipt.json'));
+      assert.equal(receipt.outputSha256, digest(await readFile(entry.output))); assert.equal(receipt.contentLoss.count, 0);
+      pass(entry.name + ' text-box text shape undo, redo, recovery and reopening preserve the target');
+    } finally {source.free(); await page.close();}
+  }
+  for (const entry of data.documents.filter(e => e.name.startsWith('text-shape.'))) {
     const source = new HwpDocument(await readFile(entry.source)), page = await context.newPage(), frame = page.frameLocator('#editor iframe');
     const check = async (expected) => {const saved = new HwpDocument(await readFile(entry.output)); try {verify(source, saved, expected);} finally {saved.free();}};
     try {
