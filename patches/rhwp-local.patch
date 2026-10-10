@@ -11931,10 +11931,17 @@ index 7c31daa4c..e328f71ef 100644
                      c.paragraphs.first().map_or(0, |p| p.text.chars().count())
                  })
 diff --git a/rhwp-studio/src/command/commands/format.ts b/rhwp-studio/src/command/commands/format.ts
-index 99fa75dd2..52a356669 100644
+index 99fa75dd2..6b7214001 100644
 --- a/rhwp-studio/src/command/commands/format.ts
 +++ b/rhwp-studio/src/command/commands/format.ts
-@@ -486,10 +486,10 @@ export const formatCommands: CommandDef[] = [
+@@ -480,16 +480,16 @@ export const formatCommands: CommandDef[] = [
+           return;
+         }
+         const dialog = new PicturePropsDialog(services.wasm, services.eventBus, services);
+-        dialog.open(ref.sec, ref.ppi, ref.ci, ref.type);
++        dialog.open(ref.sec, ref.ppi, ref.ci, ref.type, ref.headerFooter, ref.cellPath, ref.ci);
+         return;
+       }
  
        // 표 선택 시
        if (ih.isInTableObjectSelection()) {
@@ -13663,7 +13670,7 @@ index d4d46931d..9d28845af 100644
                          return tr.cell_context.as_ref().map_or(false, |ctx| {
                              ctx.parent_para_index == parent_para
 diff --git a/rhwp-studio/src/ui/picture-props-dialog.ts b/rhwp-studio/src/ui/picture-props-dialog.ts
-index 0f3466ce9..04932c90a 100644
+index 0f3466ce9..041843de7 100644
 --- a/rhwp-studio/src/ui/picture-props-dialog.ts
 +++ b/rhwp-studio/src/ui/picture-props-dialog.ts
 @@ -457,6 +457,7 @@ export class PicturePropsDialog {
@@ -13682,7 +13689,32 @@ index 0f3466ce9..04932c90a 100644
      this.sizeLockControls.push(this.heightInput);
      hRow.appendChild(this.heightInput);
      hRow.appendChild(this.unit('mm'));
-
+@@ -1254,10 +1256,12 @@ export class PicturePropsDialog {
+     const lRow = this.row();
+     lRow.appendChild(this.label(i18nText('dialog.pictureProps.label.label.x9b6417')));
+     this.tbMarginLeftInput = this.numberInput(0);
++    this.tbMarginLeftInput.setAttribute('aria-label', '글상자 왼쪽 여백(mm)');
+     lRow.appendChild(this.tbMarginLeftInput);
+     lRow.appendChild(this.unit('mm'));
+     lRow.appendChild(this.label(i18nText('dialog.pictureProps.label.label.x56ba66')));
+     this.tbMarginTopInput = this.numberInput(0);
++    this.tbMarginTopInput.setAttribute('aria-label', '글상자 위쪽 여백(mm)');
+     lRow.appendChild(this.tbMarginTopInput);
+     lRow.appendChild(this.unit('mm'));
+     // 모두(A) 동기 스피너
+@@ -1277,10 +1281,12 @@ export class PicturePropsDialog {
+     const rRow = this.row();
+     rRow.appendChild(this.label(i18nText('dialog.pictureProps.label.label.xeac67d')));
+     this.tbMarginRightInput = this.numberInput(0);
++    this.tbMarginRightInput.setAttribute('aria-label', '글상자 오른쪽 여백(mm)');
+     rRow.appendChild(this.tbMarginRightInput);
+     rRow.appendChild(this.unit('mm'));
+     rRow.appendChild(this.label(i18nText('dialog.pictureProps.label.label.x22b9f2')));
+     this.tbMarginBottomInput = this.numberInput(0);
++    this.tbMarginBottomInput.setAttribute('aria-label', '글상자 아래쪽 여백(mm)');
+     rRow.appendChild(this.tbMarginBottomInput);
+     rRow.appendChild(this.unit('mm'));
+     marginFs.appendChild(rRow);
 diff --git a/rhwp-studio/src/ui/equation-editor-dialog.ts b/rhwp-studio/src/ui/equation-editor-dialog.ts
 index 92f2d96e4..5543d585b 100644
 --- a/rhwp-studio/src/ui/equation-editor-dialog.ts
@@ -13894,8 +13926,60 @@ index 7b38a1e2a..f36f06676 100644
                          if let Control::Shape(s) = ctrl {
                              if let Some(tb) = get_textbox_from_shape(s.as_ref()) {
                                  paragraphs = &tb.paragraphs;
+diff --git a/rhwp-studio/src/ui/picture-props-apply-model.ts b/rhwp-studio/src/ui/picture-props-apply-model.ts
+index 3fd68f37e..3d4a92a7c 100644
+--- a/rhwp-studio/src/ui/picture-props-apply-model.ts
++++ b/rhwp-studio/src/ui/picture-props-apply-model.ts
+@@ -184,7 +184,7 @@ export function displayedMm(hwp: number): string {
+ }
+ 
+ /**
+- * [Task #6758] 크기 전용 — 사용자가 칸을 건드렸을 때만 패치에 싣는다.
++ * 음수가 아닌 길이는 표시값이 바뀌었을 때만 패치에 싣는다.
+  *
+  * 종전에는 되돌린 HWPUNIT 과 모델 값을 비교했다(`addChanged`). 그런데 mm 2자리 표시는
+  * 저장 단위를 잃는다 — 높이 1 HWPUNIT 은 `"0.00"` 으로 보이고 되돌리면 `0` 이라 모델의
+@@ -320,10 +320,10 @@ function appendOuterMargin(
+   props: PictureProperties,
+   form: PicturePropsApplyForm['outerMargin'],
+ ): void {
+-  if (form.left !== undefined) addChanged(patch, 'outerMarginLeft', mmToHwp(form.left), props.outerMarginLeft ?? 0);
+-  if (form.right !== undefined) addChanged(patch, 'outerMarginRight', mmToHwp(form.right), props.outerMarginRight ?? 0);
+-  if (form.top !== undefined) addChanged(patch, 'outerMarginTop', mmToHwp(form.top), props.outerMarginTop ?? 0);
+-  if (form.bottom !== undefined) addChanged(patch, 'outerMarginBottom', mmToHwp(form.bottom), props.outerMarginBottom ?? 0);
++  if (form.left !== undefined) addChangedSize(patch, 'outerMarginLeft', form.left, props.outerMarginLeft ?? 0);
++  if (form.right !== undefined) addChangedSize(patch, 'outerMarginRight', form.right, props.outerMarginRight ?? 0);
++  if (form.top !== undefined) addChangedSize(patch, 'outerMarginTop', form.top, props.outerMarginTop ?? 0);
++  if (form.bottom !== undefined) addChangedSize(patch, 'outerMarginBottom', form.bottom, props.outerMarginBottom ?? 0);
+ }
+ 
+ function appendCaption(
+@@ -349,7 +349,7 @@ function appendBorder(
+   form: PicturePropsApplyForm['line'],
+ ): void {
+   if (form.color !== undefined) addChanged(patch, 'borderColor', hexToColorRef(form.color), props.borderColor ?? 0);
+-  if (form.width !== undefined) addChanged(patch, 'borderWidth', mmToHwp(form.width), props.borderWidth ?? 0);
++  if (form.width !== undefined) addChangedSize(patch, 'borderWidth', form.width, props.borderWidth ?? 0);
+ }
+ 
+ function appendShapeLine(
+@@ -373,10 +373,10 @@ function appendShapeTextBox(
+   props: ShapeProperties,
+   form: PicturePropsApplyForm['shapeTextBox'],
+ ): void {
+-  addChanged(patch, 'tbMarginLeft', mmToHwp(form.marginLeft), props.tbMarginLeft ?? 0);
+-  addChanged(patch, 'tbMarginRight', mmToHwp(form.marginRight), props.tbMarginRight ?? 0);
+-  addChanged(patch, 'tbMarginTop', mmToHwp(form.marginTop), props.tbMarginTop ?? 0);
+-  addChanged(patch, 'tbMarginBottom', mmToHwp(form.marginBottom), props.tbMarginBottom ?? 0);
++  addChangedSize(patch, 'tbMarginLeft', form.marginLeft, props.tbMarginLeft ?? 0);
++  addChangedSize(patch, 'tbMarginRight', form.marginRight, props.tbMarginRight ?? 0);
++  addChangedSize(patch, 'tbMarginTop', form.marginTop, props.tbMarginTop ?? 0);
++  addChangedSize(patch, 'tbMarginBottom', form.marginBottom, props.tbMarginBottom ?? 0);
+   addChanged(patch, 'tbVerticalAlign', form.verticalAlign ?? 'Top', props.tbVerticalAlign ?? 'Top');
+ }
+ 
 diff --git a/rhwp-studio/src/engine/input-handler-picture.ts b/rhwp-studio/src/engine/input-handler-picture.ts
-index c2c094fec..4e86b8e51 100644
+index c2c094fec..06e42704f 100644
 --- a/rhwp-studio/src/engine/input-handler-picture.ts
 +++ b/rhwp-studio/src/engine/input-handler-picture.ts
 @@ -319,6 +319,22 @@ export function findPictureAtClick(this: any,
@@ -13921,3 +14005,18 @@ index c2c094fec..4e86b8e51 100644
  /** 선택된 개체의 bbox를 페이지 레이아웃에서 찾는다. */
  export function findPictureBbox(this: any,
    ref: { sec: number; ppi: number; ci: number; type?: 'image' | 'shape' | 'equation' | 'group' | 'line' | 'ole'; cellIdx?: number; cellParaIdx?: number; cellPath?: CellPathLike; noteRef?: any; pageIndex?: number },
+@@ -951,6 +967,14 @@ export function finishPictureResizeDrag(this: any, e: MouseEvent): void {
+     return;
+   }
+ 
++  // 포인터가 움직이지 않은 핸들 클릭은 크기를 바꾸지 않는다. 핸들 bbox는 페이지 px로
++  // 반올림돼 있어, 그대로 HWPUNIT으로 되돌리면 저장된 크기가 몇 단위씩 흔들린다.
++  if (e.clientX === state.startClientX && e.clientY === state.startClientY) {
++    this.cleanupPictureResizeDrag();
++    this.renderPictureObjectSelection();
++    return;
++  }
++
+   // 단일 선택 리사이즈 (회전 반영: pivot 고정, 위치도 갱신)
+   const newBbox = calcResizedBboxRotated(state, e, zoom);
+   const rotAngle = (state.rotationAngle ?? 0) as number;

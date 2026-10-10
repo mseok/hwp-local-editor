@@ -18,6 +18,7 @@ try {
   d.splitParagraph(0, 1, 'HOST-UNCHANGED'.length);
   const shape = JSON.parse(d.createShapeControl(json({sectionIdx: 0, paraIdx: 1, charOffset: 0, width: 20000, height: 10000, treatAsChar: true, shapeType: 'textbox', horzOffset: 0, vertOffset: 0})));
   assert.equal(shape.paraIdx, 1); assert.equal(shape.controlIdx, 0);
+  d.setShapeProperties(0, 1, 0, json({tbMarginLeft: 284, tbMarginTop: 285, tbMarginRight: 286, tbMarginBottom: 287, outerMarginLeft: 284, outerMarginTop: 285, outerMarginRight: 286, outerMarginBottom: 287}));
   for (const [i, text] of ['BOX-FIRST', 'BOX-SECOND', 'BOX-UNSELECTED'].entries()) {
     if (i) d.splitParagraphInCell(0, 1, 0, 0, i - 1, d.getCellParagraphLength(0, 1, 0, 0, i - 1));
     d.insertTextInCell(0, 1, 0, 0, i, 0, text);
@@ -117,6 +118,13 @@ const ready = p => p.waitForFunction(() => window.editorReady, null, {timeout: 4
 const pass = name => {report.checks.push(name); console.log('PASS', name);};
 async function save(page, revision) {await page.getByRole('button', {name: '결과 파일 저장', exact: true}).click(); await page.locator('#delivery[data-revision="' + revision + '"]').waitFor();}
 async function editMenu(frame, label) {await frame.locator('#menu-bar').getByText('편집', {exact: true}).click(); await frame.locator('#menu-bar').getByText(label, {exact: true}).click();}
+// Page canvases are recycled after layout changes, so DOM order does not follow page order; pick by vertical position.
+async function pageCanvas(frame, index) {
+  const canvases = frame.locator('#scroll-container canvas');
+  const order = await canvases.evaluateAll(elements => elements.map((element, position) => ({position, top: parseFloat(element.style.top)})).sort((a, b) => a.top - b.top).map(entry => entry.position));
+  assert(index < order.length, 'The requested page must have a rendered canvas');
+  return canvases.nth(order[index]);
+}
 async function enter(page, source, text = 'BOX-FIRST', blank = false, border = false) {
   const texts = [];
   for (let index = 0; index < source.pageCount(); index++) {
@@ -127,14 +135,15 @@ async function enter(page, source, text = 'BOX-FIRST', blank = false, border = f
   assert.equal(texts.length, 1);
   const {node, tree, index, ancestors} = texts[0], b = node.bbox;
   assert(b.y >= 0 && b.y + b.h <= tree.bbox.h, 'Textbox text must be visible inside its owning page');
-  const canvas = page.frameLocator('#editor iframe').locator('#scroll-container canvas').nth(index);
+  const canvas = await pageCanvas(page.frameLocator('#editor iframe'), index);
   const size = await canvas.evaluate(el => ({width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height}));
   const box = ancestors.findLast(n => n.type === 'TextBox').bbox;
   const shape = ancestors.findLast(n => n.type === 'Rect').bbox;
   const point = {x: border ? shape.x + shape.w + (border === 'outside' ? 1 : -1) : blank ? box.x + box.w - 20 : b.x + b.w / 2, y: b.y + b.h / 2};
   if (blank || border) {
     assert(point.x > b.x + b.w, 'The blank click must be outside the text glyphs');
-    for (const cell of ancestors.filter(n => n.type === 'Cell')) assert(point.x >= cell.bbox.x && point.x <= cell.bbox.x + cell.bbox.w && point.y >= cell.bbox.y && point.y <= cell.bbox.y + cell.bbox.h, 'The blank click must stay inside every enclosing cell');
+    // A plain selection click is verified by its handles below; the synthetic cells are shorter than their resized textbox.
+    if (border !== 'select') for (const cell of ancestors.filter(n => n.type === 'Cell')) assert(point.x >= cell.bbox.x && point.x <= cell.bbox.x + cell.bbox.w && point.y >= cell.bbox.y && point.y <= cell.bbox.y + cell.bbox.h, 'The blank click must stay inside every enclosing cell');
   }
   const hit = JSON.parse(source.hitTest(index, border ? b.x + b.w / 2 : point.x, point.y));
   assert.equal(hit.isTextBox, true, 'The rendered textbox text must resolve to its own container');
@@ -154,15 +163,16 @@ async function enter(page, source, text = 'BOX-FIRST', blank = false, border = f
     assert.deepEqual(control.cellPath || [], hit.cellPath.slice(0, -1), 'The object reference must retain every enclosing cell');
     assert.equal(control.paraIdx, hit.parentParaIndex, 'The object reference must retain its body owner');
   }
+  if (border === 'select') return;
   if (border === 'enter') await page.frameLocator('#editor iframe').getByRole('textbox', {name: '문서 편집 입력', exact: true}).press('Enter');
   else await canvas.dblclick({position});
 }
-function verify(source, result, changed, selected = [0], depth = 1, continued = false, alignment = 'center') {
+function verify(source, result, changed, selected = [0], depth = 1, continued = false, alignment = 'center', shapePatch = {}) {
   assert.equal(result.getTextFileUnicode(true), source.getTextFileUnicode(true));
   const address = Array.from({length: depth}, () => ({controlIndex: 0, cellIndex: 0, cellParaIndex: 0}));
   if (continued) address[0].cellIndex = 24;
-  if (depth === 1) assert.equal(result.getShapeProperties(0, 1, 0), source.getShapeProperties(0, 1, 0));
-  else assert.equal(result.getCellShapePropertiesByPath(0, 1, json(address.slice(0, -1)), 0), source.getCellShapePropertiesByPath(0, 1, json(address.slice(0, -1)), 0));
+  const shapeProps = doc => JSON.parse(depth === 1 ? doc.getShapeProperties(0, 1, 0) : doc.getCellShapePropertiesByPath(0, 1, json(address.slice(0, -1)), 0));
+  assert.deepEqual(shapeProps(result), {...shapeProps(source), ...shapePatch});
   for (let level = 1; level < depth; level++) {
     const target = address.slice(0, level);
     assert.equal(result.getTablePropertiesByPath(0, 1, json(target)), source.getTablePropertiesByPath(0, 1, json(target)));
@@ -297,6 +307,49 @@ try {
         assert.equal(outsideReceipt.outputSha256, digest(await readFile(entry.output))); assert.equal(outsideReceipt.contentLoss.count, 0);
         pass(entry.name + ' outside-border formatting survives saved reopening');
       } finally {baseline.free();}
+      const propertyBaseline = new HwpDocument(await readFile(entry.output));
+      const shapePatch = {width: Math.round(60 * 7200 / 25.4), height: Math.round(32 * 7200 / 25.4), tbMarginLeft: Math.round(3 * 7200 / 25.4), tbMarginTop: Math.round(2 * 7200 / 25.4), tbMarginRight: Math.round(3 * 7200 / 25.4), tbMarginBottom: Math.round(2 * 7200 / 25.4)};
+      const verifyProperties = async (edited = true) => {
+        const saved = new HwpDocument(await readFile(entry.output));
+        try {verify(propertyBaseline, saved, false, [0], depth, continued, 'right', edited ? shapePatch : {});} finally {saved.free();}
+      };
+      try {
+        await enter(page, propertyBaseline, 'BOX-FIRST', false, 'select');
+        await frame.getByRole('button', {name: '개체 속성', exact: true}).click();
+        await frame.getByRole('spinbutton', {name: '개체 너비(mm)', exact: true}).waitFor();
+        await frame.getByRole('checkbox', {name: '비율 유지', exact: true}).uncheck();
+        await frame.getByRole('spinbutton', {name: '개체 너비(mm)', exact: true}).fill('60');
+        await frame.getByRole('spinbutton', {name: '개체 높이(mm)', exact: true}).fill('32');
+        await frame.getByRole('button', {name: '설정(D)', exact: true}).click(); await save(page, 19);
+        const sized = new HwpDocument(await readFile(entry.output));
+        try {verify(propertyBaseline, sized, false, [0], depth, continued, 'right', {width: shapePatch.width, height: shapePatch.height});} finally {sized.free();}
+        pass(entry.name + ' size-only confirmation preserves undisplayed border and margin precision');
+        const current = new HwpDocument(await readFile(entry.output));
+        try {await enter(page, current, 'BOX-FIRST', false, 'select');} finally {current.free();}
+        await frame.getByRole('button', {name: '개체 속성', exact: true}).click();
+        await frame.getByRole('button', {name: '글상자', exact: true}).click();
+        for (const [label, value] of [['글상자 왼쪽 여백(mm)', '3'], ['글상자 위쪽 여백(mm)', '2'], ['글상자 오른쪽 여백(mm)', '3'], ['글상자 아래쪽 여백(mm)', '2']]) await frame.getByRole('spinbutton', {name: label, exact: true}).fill(value);
+        await frame.getByRole('button', {name: '설정(D)', exact: true}).click(); await save(page, 20); await verifyProperties();
+        pass(entry.name + ' textbox size and margins retain all other shape and enclosing properties');
+        await editMenu(frame, '되돌리기'); await editMenu(frame, '되돌리기'); await save(page, 21); await verifyProperties(false);
+        await editMenu(frame, '다시 실행'); await editMenu(frame, '다시 실행');
+        await page.waitForFunction(() => {const revision = localStudio.element.contentWindow.rhwpStudio.localRecovery.read(Number.MAX_SAFE_INTEGER).revision; return revision > 0 && revision === Number(document.querySelector('#status').dataset.savedRevision);});
+        await page.reload(); await ready(page); await save(page, 22); await verifyProperties();
+        pass(entry.name + ' textbox property undo, redo and journal recovery preserve the target');
+        await page.goto(base + '/editor?id=' + entry.id + '&result=1'); await ready(page); await verifyProperties();
+        const reopened = new HwpDocument(await readFile(entry.output));
+        try {await enter(page, reopened, 'BOX-FIRST', false, 'select');} finally {reopened.free();}
+        await frame.getByRole('button', {name: '개체 속성', exact: true}).click();
+        assert.equal(Number(await frame.getByRole('spinbutton', {name: '개체 너비(mm)', exact: true}).inputValue()).toFixed(2), '60.00');
+        assert.equal(Number(await frame.getByRole('spinbutton', {name: '개체 높이(mm)', exact: true}).inputValue()).toFixed(2), '32.00');
+        await frame.getByRole('button', {name: '글상자', exact: true}).click();
+        assert.equal(Number(await frame.getByRole('spinbutton', {name: '글상자 왼쪽 여백(mm)', exact: true}).inputValue()).toFixed(2), '3.00');
+        await frame.getByRole('button', {name: '설정(D)', exact: true}).click(); await save(page, 23); await verifyProperties();
+        assert.equal(digest(await readFile(entry.source)), entry.sourceSha256);
+        const receipt = JSON.parse(await readFile(entry.output + '.receipt.json'));
+        assert.equal(receipt.outputSha256, digest(await readFile(entry.output))); assert.equal(receipt.contentLoss.count, 0);
+        pass(entry.name + ' saved textbox properties reopen and unchanged confirmation retains source and receipt hashes');
+      } finally {propertyBaseline.free();}
     } finally {source.free(); await page.close();}
   }
   for (const entry of data.documents.filter(e => e.name.startsWith('table-in-box.'))) {
@@ -310,7 +363,7 @@ try {
       assert.equal(hit.isTextBox, undefined, 'An empty table cell inside a textbox must remain a table cell');
       assert.equal(hit.parentParaIndex, 1); assert.equal(hit.cellPath.length, 2); assert.equal(hit.cellPath[1].cellIndex, 1);
       await page.goto(base + '/editor?id=' + entry.id); await ready(page);
-      const canvas = frame.locator('#scroll-container canvas').first(), size = await canvas.evaluate(el => ({width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height}));
+      const canvas = await pageCanvas(frame, 0), size = await canvas.evaluate(el => ({width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height}));
       await canvas.click({position: {x: point.x * size.width / tree.bbox.w, y: point.y * size.height / tree.bbox.h}});
       await frame.getByRole('textbox', {name: '문서 편집 입력', exact: true}).pressSequentially('EMPTY-EDIT'); await save(page, 1);
       async function verifyGuard(edited) {
