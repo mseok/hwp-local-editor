@@ -5,6 +5,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import {createWorkspace, digest} from '../app/workspace.mjs';
 import {initSync, HwpDocument} from '../.build/core/rhwp.js';
+import {unzip} from './zip-fixture.mjs';
 
 const require = createRequire(process.env.PLAYWRIGHT_PACKAGE_PATH || import.meta.url), {chromium} = require('playwright');
 await mkdir('test-results', {recursive: true});
@@ -42,6 +43,7 @@ async function pageCanvas(frame, index) {
   const order = await canvases.evaluateAll(elements => elements.map((element, position) => ({position, top: parseFloat(element.style.top)})).sort((a, b) => a.top - b.top).map(entry => entry.position));
   return canvases.nth(order[index]);
 }
+let lastBoxClick = null;
 async function selectBox(frame, source) {
   const tree = JSON.parse(source.getPageRenderTree(0));
   let found = null;
@@ -50,8 +52,21 @@ async function selectBox(frame, source) {
   const b = found.node.bbox, shape = found.ancestors.findLast(n => n.type === 'Rect').bbox;
   const canvas = await pageCanvas(frame, 0);
   const size = await canvas.evaluate(el => ({width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height}));
-  await canvas.click({position: {x: (shape.x + shape.w - 1) * size.width / tree.bbox.w, y: (b.y + b.h / 2) * size.height / tree.bbox.h}});
+  lastBoxClick = {canvas, position: {x: (shape.x + shape.w - 1) * size.width / tree.bbox.w, y: (b.y + b.h / 2) * size.height / tree.bbox.h}};
+  await canvas.click({position: lastBoxClick.position});
   assert((await frame.locator('.table-object-layer > div').count()) >= 8, 'The text box must be selected');
+}
+function verifyCaption(source, result) {
+  const before = read(source), after = read(result);
+  for (const key of ['pages', 'boxChar', 'boxPara', 'bodyChar', 'hostChar', 'hostPara']) assert.equal(after[key], before[key], key + ' must stay untouched');
+  assert.equal(result.getTextInCellByPath(0, 1, json(boxPath), 0, 100), 'BOX-TEXT', 'the text box paragraph must stay untouched');
+  assert.equal(after.text.includes('BODY-KEEP') && after.text.includes('HOST-KEEP'), true);
+  assert.equal(after.shape.hasCaption, true); assert.equal(after.shape.captionDirection, 'Bottom'); assert.equal(after.shape.captionWidth, Math.round(30 * 7200 / 25.4)); assert.equal(after.shape.captionSpacing, Math.round(3 * 7200 / 25.4));
+  const strip = props => {const copy = {...props}; for (const key of ['hasCaption', 'captionDirection', 'captionVertAlign', 'captionWidth', 'captionSpacing', 'captionMaxWidth', 'captionIncludeMargin']) delete copy[key]; return copy;};
+  assert.deepEqual(strip(after.shape), strip(before.shape), 'other shape properties must stay untouched');
+  const xml = unzip(Buffer.from(result.exportHwpx())).get('Contents/section0.xml').toString();
+  const caption = xml.match(/<hp:caption\b[\s\S]*?<\/hp:caption>/);
+  assert(caption && /<hp:autoNum\b/.test(caption[0]), 'the exported text box must carry a caption with its auto number');
 }
 const colorRef = hex => {const v = hex.replace('#', ''); return (parseInt(v.slice(4, 6), 16) << 16) | (parseInt(v.slice(2, 4), 16) << 8) | parseInt(v.slice(0, 2), 16);};
 const changedKeys = ['borderWidth', 'borderColor', 'fillType', 'fillBgColor', 'fillPatColor', 'fillPatType', 'fillAlpha', 'tbVerticalAlign', 'shadowType', 'shadowOffsetX', 'shadowOffsetY', 'shadowColor', 'shadowAlpha'];
@@ -127,6 +142,18 @@ try {
       const receipt = JSON.parse(await readFile(entry.output + '.receipt.json'));
       assert.equal(receipt.outputSha256, digest(await readFile(entry.output))); assert.equal(receipt.contentLoss.count, 0);
       pass(entry.name + ' reopened text-box line and fill show in the dialog and an unchanged confirmation keeps hashes');
+      const captionSource = new HwpDocument(await readFile(entry.output));
+      try {
+        await selectBox(frame, captionSource);
+        await lastBoxClick.canvas.click({button: 'right', position: lastBoxClick.position});
+        await frame.getByText('캡션 넣기(A)', {exact: true}).click();
+        // Typing right after 캡션 넣기(A) lands in the text box paragraph rather than the new caption (recorded observation), so the caption is created without text here.
+        await save(page, 5);
+        const saved = new HwpDocument(await readFile(entry.output)); try {verifyCaption(captionSource, saved);} finally {saved.free();}
+        await page.goto(base + '/editor?id=' + entry.id + '&result=1'); await ready(page);
+        const reopenedCaption = new HwpDocument(await readFile(entry.output)); try {verifyCaption(captionSource, reopenedCaption);} finally {reopenedCaption.free();}
+        pass(entry.name + ' caption added through the object context menu keeps the text box and reopens with its caption');
+      } finally {captionSource.free();}
     } finally {source.free(); await page.close();}
   }
   assert.deepEqual(report.errors, []); assert.deepEqual(report.warnings, []); assert.deepEqual(report.externalRequests, []);
