@@ -13148,7 +13148,7 @@ index fc08501c9..5489238c5 100644
    border: 1px solid var(--ui-border);
    box-shadow: var(--shadow-dropdown);
 diff --git a/src/document_core/commands/formatting.rs b/src/document_core/commands/formatting.rs
-index 95cce1d58..3c21e62fb 100644
+index 95cce1d58..5dd772064 100644
 --- a/src/document_core/commands/formatting.rs
 +++ b/src/document_core/commands/formatting.rs
 @@ -281,6 +281,16 @@ impl DocumentCore {
@@ -13168,7 +13168,37 @@ index 95cce1d58..3c21e62fb 100644
      /// 글자 속성 JSON 생성 헬퍼
      pub(crate) fn build_char_properties_json(
          &self,
-@@ -1859,6 +1869,88 @@ impl DocumentCore {
+@@ -1559,7 +1569,14 @@ impl DocumentCore {
+ 
+         // 테두리/배경 변경 처리: BorderFill 생성 → border_fill_id 세팅
+         if json_has_border_keys(props_json) {
+-            let bf_id = self.create_border_fill_from_json(props_json);
++            let base_bf_id = self
++                .document
++                .doc_info
++                .para_shapes
++                .get(self.document.sections[sec_idx].paragraphs[para_idx].para_shape_id as usize)
++                .map(|ps| ps.border_fill_id)
++                .unwrap_or(0);
++            let bf_id = self.create_border_fill_from_json_with_base(props_json, base_bf_id);
+             mods.border_fill_id = Some(bf_id);
+         }
+         if let Some(arr) = parse_json_i16_array(props_json, "borderSpacing", 4) {
+@@ -1709,7 +1726,12 @@ impl DocumentCore {
+ 
+         // 테두리/배경 변경 처리: BorderFill 생성 → border_fill_id 세팅
+         if json_has_border_keys(props_json) {
+-            let bf_id = self.create_border_fill_from_json(props_json);
++            let base_bf_id = self
++                .get_cell_paragraph_ref(sec_idx, parent_para_idx, control_idx, cell_idx, cell_para_idx)
++                .and_then(|para| self.document.doc_info.para_shapes.get(para.para_shape_id as usize))
++                .map(|ps| ps.border_fill_id)
++                .unwrap_or(0);
++            let bf_id = self.create_border_fill_from_json_with_base(props_json, base_bf_id);
+             mods.border_fill_id = Some(bf_id);
+         }
+         if let Some(arr) = parse_json_i16_array(props_json, "borderSpacing", 4) {
+@@ -1859,6 +1881,90 @@ impl DocumentCore {
          Ok("{\"ok\":true}".to_string())
      }
  
@@ -13195,7 +13225,9 @@ index 95cce1d58..3c21e62fb 100644
 +            mods.tab_def_id = Some(self.document.find_or_create_tab_def(tab_def));
 +        }
 +        if json_has_border_keys(props_json) {
-+            mods.border_fill_id = Some(self.create_border_fill_from_json(props_json));
++            let base_bf_id = self.document.doc_info.para_shapes.get(base_id as usize)
++                .map(|ps| ps.border_fill_id).unwrap_or(0);
++            mods.border_fill_id = Some(self.create_border_fill_from_json_with_base(props_json, base_bf_id));
 +        }
 +        if let Some(arr) = parse_json_i16_array(props_json, "borderSpacing", 4) {
 +            mods.border_spacing = Some([arr[0], arr[1], arr[2], arr[3]]);
@@ -13978,6 +14010,119 @@ index 3fd68f37e..3d4a92a7c 100644
    addChanged(patch, 'tbVerticalAlign', form.verticalAlign ?? 'Top', props.tbVerticalAlign ?? 'Top');
  }
  
+diff --git a/rhwp-studio/src/ui/char-shape-dialog.ts b/rhwp-studio/src/ui/char-shape-dialog.ts
+index 8e7f50b63..4d1e44842 100644
+--- a/rhwp-studio/src/ui/char-shape-dialog.ts
++++ b/rhwp-studio/src/ui/char-shape-dialog.ts
+@@ -288,6 +288,7 @@ export class CharShapeDialog {
+     sizeRow.appendChild(this.label(i18nText('dialog.charShape.label.label')));
+     this.baseSizeInput = this.numberInput(1, 4096, 0.5);
+     this.baseSizeInput.style.width = '60px';
++    this.baseSizeInput.setAttribute('aria-label', '글자 모양 기준 크기(pt)');
+     sizeRow.appendChild(this.baseSizeInput);
+     sizeRow.appendChild(this.unit('pt'));
+     panel.appendChild(sizeRow);
+@@ -320,6 +321,7 @@ export class CharShapeDialog {
+     this.fontSelect = document.createElement('select');
+     this.fontSelect.className = 'dialog-select';
+     this.fontSelect.style.width = '140px';
++    this.fontSelect.setAttribute('aria-label', '글자 모양 글꼴');
+ 
+     // 웹폰트 optgroup
+     const webGroup = document.createElement('optgroup');
+diff --git a/rhwp-studio/src/ui/para-shape-dialog.ts b/rhwp-studio/src/ui/para-shape-dialog.ts
+index 32547766e..316450a5a 100644
+--- a/rhwp-studio/src/ui/para-shape-dialog.ts
++++ b/rhwp-studio/src/ui/para-shape-dialog.ts
+@@ -391,6 +391,7 @@ export class ParaShapeDialog {
+     this.lineSpacingTypeSelect = document.createElement('select');
+     this.lineSpacingTypeSelect.className = 'dialog-select';
+     this.lineSpacingTypeSelect.style.width = '100px';
++    this.lineSpacingTypeSelect.setAttribute('aria-label', '문단 모양 줄 간격 종류');
+     LINE_SPACING_TYPES.forEach(opt => {
+       const o = document.createElement('option');
+       o.value = opt.value;
+@@ -401,6 +402,7 @@ export class ParaShapeDialog {
+     lsRow.appendChild(this.lineSpacingTypeSelect);
+     this.lineSpacingInput = numberInput(0, 9999, 1);
+     this.lineSpacingInput.style.width = '55px';
++    this.lineSpacingInput.setAttribute('aria-label', '문단 모양 줄 간격');
+     this.lineSpacingInput.style.marginLeft = '6px';
+     lsRow.appendChild(this.lineSpacingInput);
+     this.lineSpacingUnitLabel = unit('%');
+@@ -704,7 +706,8 @@ export class ParaShapeDialog {
+     this.borderResult.bgFillSelect.value = p.fillType === 'solid' ? 'solid' : 'none';
+     this.borderResult.bgFillPicker.value = p.fillColor || '#ffffff';
+     this.borderResult.bgPatColorInput.value = p.patternColor || '#000000';
+-    this.borderResult.bgPatShapeSelect.value = String(p.patternType ?? 0);
++    // 무늬 select의 '없음'은 -1이다. 배경이 없거나 무늬 번호가 없으면 '없음'으로 맞춘다.
++    this.borderResult.bgPatShapeSelect.value = p.fillType === 'solid' && (p.patternType ?? 0) > 0 ? String(p.patternType) : '-1';
+     // 간격 (HWPUNIT → mm)
+     const sp = p.borderSpacing ?? [0, 0, 0, 0];
+     // bdSpacingInputs: [0]=left, [1]=top, [2]=right, [3]=bottom
+@@ -892,8 +895,11 @@ export class ParaShapeDialog {
+       mods.borderBottom = { ...this.borderStates.bottom };
+     }
+ 
+-    // 배경
++    // 배경 — 배경이 없던 문단에서 계속 없음이면 배경 키를 보내지 않는다. 배경 키만
++    // 보내면 엔진이 테두리/배경을 새로 만들어 줄 간격만 바꿔도 테두리가 생겼다.
+     const newFillType = this.borderResult.bgFillSelect.value;
++    const backgroundUntouched = newFillType === 'none' && (p.fillType ?? 'none') === 'none';
++    if (!backgroundUntouched) {
+     if (newFillType !== (p.fillType ?? 'none')) mods.fillType = newFillType;
+     const newFillColor = this.borderResult.bgFillPicker.value;
+     if (newFillColor !== (p.fillColor ?? '#ffffff')) mods.fillColor = newFillColor;
+@@ -909,6 +915,7 @@ export class ParaShapeDialog {
+     if (mods.fillColor || mods.patternColor || mods.patternType !== undefined) {
+       if (!mods.fillType) mods.fillType = newFillType;
+     }
++    }
+ 
+     // 간격 (mm → HWPUNIT)
+     const origSp = p.borderSpacing ?? [0, 0, 0, 0];
+diff --git a/src/document_core/html_table_import.rs b/src/document_core/html_table_import.rs
+index e4b1f8469..1d6b4dde4 100644
+--- a/src/document_core/html_table_import.rs
++++ b/src/document_core/html_table_import.rs
+@@ -797,6 +797,13 @@ impl DocumentCore {
+     /// JSON에서 border/fill 속성을 파싱하여 BorderFill을 생성/재사용한다.
+     /// 프론트엔드 글자 테두리/배경 대화상자에서 호출된다.
+     pub(crate) fn create_border_fill_from_json(&mut self, json: &str) -> u16 {
++        self.create_border_fill_from_json_with_base(json, 0)
++    }
++
++    /// `borderFillId`가 없는 JSON은 `base_id`의 BorderFill을 바탕으로 한다. 배경만 바꾸는
++    /// 문단 모양 적용이 기본 BorderLine(실선)으로 새 테두리를 만들어 보이지 않던 선이
++    /// 생기는 것을 막는다. `base_id`가 0이면 종전처럼 빈 BorderFill에서 시작한다.
++    pub(crate) fn create_border_fill_from_json_with_base(&mut self, json: &str, base_id: u16) -> u16 {
+         use crate::model::style::{
+             BorderFill, BorderLine, CenterLine, DiagonalLine, Fill, FillType, SolidFill,
+         };
+@@ -820,16 +827,14 @@ impl DocumentCore {
+         }
+ 
+         let mut bf = json_u32(json, "borderFillId")
++            .filter(|id| *id != 0)
++            .or(if base_id == 0 { None } else { Some(base_id as u32) })
+             .and_then(|id| {
+-                if id == 0 {
+-                    None
+-                } else {
+-                    self.document
+-                        .doc_info
+-                        .border_fills
+-                        .get((id - 1) as usize)
+-                        .cloned()
+-                }
++                self.document
++                    .doc_info
++                    .border_fills
++                    .get((id - 1) as usize)
++                    .cloned()
+             })
+             .unwrap_or(BorderFill {
+                 raw_data: None,
 diff --git a/rhwp-studio/src/engine/input-handler-picture.ts b/rhwp-studio/src/engine/input-handler-picture.ts
 index c2c094fec..06e42704f 100644
 --- a/rhwp-studio/src/engine/input-handler-picture.ts
