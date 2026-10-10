@@ -4662,7 +4662,7 @@ index 06ac2fa..e69b722 100644
              let mut inline_x = match para_alignment {
                  Alignment::Center | Alignment::Distribute => {
 diff --git a/src/renderer/layout/table_layout.rs b/src/renderer/layout/table_layout.rs
-index 536044424..0b89e57d4 100644
+index 536044424..2036ac488 100644
 --- a/src/renderer/layout/table_layout.rs
 +++ b/src/renderer/layout/table_layout.rs
 @@ -3659,25 +3659,26 @@ impl LayoutEngine {
@@ -4723,7 +4723,59 @@ index 536044424..0b89e57d4 100644
              // 글 앞/뒤 표는 셀의 텍스트 흐름과 별개인 부동 개체다. 자리차지
              // 표의 가운데 배치 호환 규칙을 적용하면 명시한 LEFT/RIGHT 앵커가
              // 사라진다. 한컴 PDF에서도 문단 기준 LEFT/offset=0은 셀 왼끝이다.
-@@ -21021,6 +21027,62 @@ impl LayoutEngine {
+@@ -7414,9 +7420,12 @@ impl LayoutEngine {
+                             };
+                             // [Task #1138] 셀 컨텍스트 (section, outer_para, outer_table_ctrl, cell, cell_para, inner_ctrl)
+                             let table_cell_ctx = table_meta.map(|(opi, otci)| {
+-                                (section_index, opi, otci, cell_idx, cp_idx, ctrl_idx)
++                                let owner = cell_context
++                                    .as_ref()
++                                    .map_or(opi, |ctx| ctx.parent_para_index);
++                                (section_index, owner, otci, cell_idx, cp_idx, ctrl_idx)
+                             });
+-                            self.layout_cell_shape(
++                            self.layout_cell_shape_with_parent_path(
+                                 tree,
+                                 cell_node,
+                                 shape,
+@@ -7427,6 +7436,7 @@ impl LayoutEngine {
+                                 bin_data_content,
+                                 clamp_header_negative_para_offset,
+                                 table_cell_ctx,
++                                cell_context.as_ref().map_or(&[], |ctx| ctx.path.as_slice()),
+                             );
+                             inline_x += shape_w;
+                         } else {
+@@ -7440,7 +7450,10 @@ impl LayoutEngine {
+                             };
+                             // [Task #1138] 셀 컨텍스트
+                             let table_cell_ctx = table_meta.map(|(opi, otci)| {
+-                                (section_index, opi, otci, cell_idx, cp_idx, ctrl_idx)
++                                let owner = cell_context
++                                    .as_ref()
++                                    .map_or(opi, |ctx| ctx.parent_para_index);
++                                (section_index, owner, otci, cell_idx, cp_idx, ctrl_idx)
+                             });
+                             // HWP5가 셀 안의 번호 주석 앞에 남긴 음수 y offset은
+                             // 다음 inline TopAndBottom 그림의 저장 줄을 거슬러 올라가는
+@@ -7466,7 +7479,7 @@ impl LayoutEngine {
+                             {
+                                 shape_for_layout.common_mut().vertical_offset = 0;
+                             }
+-                            self.layout_cell_shape(
++                            self.layout_cell_shape_with_parent_path(
+                                 tree,
+                                 cell_node,
+                                 &shape_for_layout,
+@@ -7477,6 +7490,7 @@ impl LayoutEngine {
+                                 bin_data_content,
+                                 clamp_header_negative_para_offset,
+                                 table_cell_ctx,
++                                cell_context.as_ref().map_or(&[], |ctx| ctx.path.as_slice()),
+                             );
+                             if matches!(shape.common().text_wrap, TextWrap::TopAndBottom) {
+                                 rendered_top_and_bottom_non_inline = true;
+@@ -21021,6 +21035,62 @@ impl LayoutEngine {
      }
  }
  
@@ -7318,7 +7370,7 @@ index 2f0b5ae..0fb0243 100644
          w,
          "hh:breakSetting",
 diff --git a/src/wasm_api.rs b/src/wasm_api.rs
-index 2031085e3..03825280d 100644
+index 2031085e3..9e7d0a6bc 100644
 --- a/src/wasm_api.rs
 +++ b/src/wasm_api.rs
 @@ -189,6 +189,11 @@ fn render_page_to_canvas_filtered_with_profile_impl(
@@ -7693,7 +7745,33 @@ index 2031085e3..03825280d 100644
      /// 캐럿 위치에서 문단을 분할한다 (Enter 키).
      ///
      /// char_offset 이후의 텍스트가 새 문단으로 이동한다.
-@@ -2941,6 +3212,24 @@ impl HwpDocument {
+@@ -2695,12 +2966,21 @@ impl HwpDocument {
+ 
+         // 컨텍스트가 있으면 (컨테이너 내부) 렌더링된 마지막 문단 인덱스를 조회
+         let max_para = if !context.is_empty() {
+-            let last = &context[context.len() - 1];
++            let path: Vec<_> = context
++                .iter()
++                .enumerate()
++                .map(|(index, entry)| {
++                    (
++                        entry.ctrl_idx,
++                        entry.cell_idx,
++                        context.get(index + 1).map_or(0, |next| next.parent_para),
++                    )
++                })
++                .collect();
+             self.core.last_rendered_para_in_container(
+                 sec as usize,
+-                last.parent_para,
+-                last.ctrl_idx,
+-                last.cell_idx,
++                context[0].parent_para,
++                &path,
+             )
+         } else {
+             None
+@@ -2941,6 +3221,24 @@ impl HwpDocument {
          .map_err(|e| e.into())
      }
  
@@ -7718,7 +7796,7 @@ index 2031085e3..03825280d 100644
      /// 페이지 좌표에서 문서 위치를 찾는다.
      ///
      /// 반환: JSON `{"sectionIndex":N,"paragraphIndex":N,"charOffset":N}`
-@@ -3262,6 +3551,23 @@ impl HwpDocument {
+@@ -3262,6 +3560,23 @@ impl HwpDocument {
          .map_err(|e| e.into())
      }
  
@@ -7742,7 +7820,7 @@ index 2031085e3..03825280d 100644
      /// 문서에 저장된 캐럿 위치를 반환한다 (문서 로딩 시 캐럿 자동 배치용).
      ///
      /// 반환: JSON `{"sectionIndex":N,"paragraphIndex":N,"charOffset":N}`
-@@ -3382,6 +3688,21 @@ impl HwpDocument {
+@@ -3382,6 +3697,21 @@ impl HwpDocument {
      /// 반환: JSON `{"ok":true,"changes":[{cellIdx,beforeId,afterId}...],
      /// "borderFillLenBefore":N,"docInfoDirtyBefore":bool}` — changes 는 [#5959]
      /// borderFillId 전환 기록(target+이웃)이다.
@@ -7764,7 +7842,7 @@ index 2031085e3..03825280d 100644
      #[wasm_bindgen(js_name = setCellProperties)]
      pub fn set_cell_properties(
          &mut self,
-@@ -3530,9 +3851,34 @@ impl HwpDocument {
+@@ -3530,9 +3860,34 @@ impl HwpDocument {
          .map_err(|e| e.into())
      }
  
@@ -7801,7 +7879,7 @@ index 2031085e3..03825280d 100644
      #[wasm_bindgen(js_name = getTableProperties)]
      pub fn get_table_properties(
          &self,
-@@ -3551,6 +3897,20 @@ impl HwpDocument {
+@@ -3551,6 +3906,20 @@ impl HwpDocument {
      /// 표 속성을 수정한다.
      ///
      /// 반환: JSON `{"ok":true}`
@@ -7822,7 +7900,7 @@ index 2031085e3..03825280d 100644
      #[wasm_bindgen(js_name = setTableProperties)]
      pub fn set_table_properties(
          &mut self,
-@@ -5498,9 +5858,11 @@ impl HwpDocument {
+@@ -5498,9 +5867,11 @@ impl HwpDocument {
          forward: bool,
          case_sensitive: bool,
          include_cells: Option<bool>,
@@ -7835,7 +7913,7 @@ index 2031085e3..03825280d 100644
                  query,
                  from_sec as usize,
                  from_para as usize,
-@@ -5509,6 +5871,7 @@ impl HwpDocument {
+@@ -5509,6 +5880,7 @@ impl HwpDocument {
                  case_sensitive,
                  // [#3865] 미지정이면 종전 동작(본문만) — 인자를 6개만 넘기던 기존 호출자 무회귀.
                  include_cells.unwrap_or(false),
@@ -7843,7 +7921,7 @@ index 2031085e3..03825280d 100644
              )
              .map_err(|e| e.into())
      }
-@@ -5567,10 +5930,17 @@ impl HwpDocument {
+@@ -5567,10 +5939,17 @@ impl HwpDocument {
          query: &str,
          new_text: &str,
          case_sensitive: bool,
@@ -7864,7 +7942,7 @@ index 2031085e3..03825280d 100644
      }
  
      /// 글로벌 쪽 번호에 해당하는 첫 문단 위치 반환
-@@ -6082,8 +6452,12 @@ impl HwpDocument {
+@@ -6082,8 +6461,12 @@ impl HwpDocument {
  
      /// 문서 글 전체 — `GetTextFile("UNICODE")`. 원문 Unicode JSON 문자열이다.
      #[wasm_bindgen(js_name = getTextFileUnicode)]
@@ -7879,7 +7957,7 @@ index 2031085e3..03825280d 100644
      }
  
      /// 문서 글을 한글 스캔 차례로 — `InitScan`·`GetText`·`ReleaseScan` 이 쓴다.
-@@ -7238,6 +7612,33 @@ impl HwpDocument {
+@@ -7238,6 +7621,33 @@ impl HwpDocument {
          .map_err(|e| e.into())
      }
  
@@ -12214,9 +12292,73 @@ index 6ec166661..d0e911cc5 100644
    }
  }
 diff --git a/rhwp-studio/src/engine/cursor.ts b/rhwp-studio/src/engine/cursor.ts
-index 22c194744..791d79729 100644
+index 22c194744..8043e83d6 100644
 --- a/rhwp-studio/src/engine/cursor.ts
 +++ b/rhwp-studio/src/engine/cursor.ts
+@@ -636,6 +636,15 @@ export class CursorState {
+   /** 현재 DocumentPosition에서 NavContextEntry[] 구성 */
+   private buildNavContext(): NavContextEntry[] {
+     const pos = this.position;
++    if (pos.isTextBox && pos.parentParaIndex !== undefined && pos.cellPath?.length) {
++      return pos.cellPath.map((entry, index, path) => ({
++        parentPara: index === 0 ? pos.parentParaIndex! : path[index - 1].cellParaIndex,
++        ctrlIdx: entry.controlIndex,
++        ctrlTextPos: 0, // Rust resolves the actual control type and position.
++        cellIdx: entry.cellIndex,
++        isTextBox: index === path.length - 1,
++      }));
++    }
+     if (pos.isTextBox && pos.parentParaIndex !== undefined && pos.controlIndex !== undefined) {
+       return [{
+         parentPara: pos.parentParaIndex,
+@@ -673,31 +682,22 @@ export class CursorState {
+         charOffset: result.charOffset,
+       };
+     } else {
+-      const last = ctx[ctx.length - 1];
+-      if (last.isTextBox) {
+-        // TextBox 내부
+-        this.position = {
+-          sectionIndex: result.sec,
+-          paragraphIndex: result.para,
+-          charOffset: result.charOffset,
+-          parentParaIndex: last.parentPara,
+-          controlIndex: last.ctrlIdx,
+-          cellIndex: 0,
+-          cellParaIndex: result.para,
+-          isTextBox: true,
+-        };
+-      } else {
+-        // Table Cell 내부
+-        this.position = {
+-          sectionIndex: result.sec,
+-          paragraphIndex: result.para,
+-          charOffset: result.charOffset,
+-          parentParaIndex: last.parentPara,
+-          controlIndex: last.ctrlIdx,
+-          cellIndex: last.cellIdx,
+-          cellParaIndex: result.para,
+-        };
+-      }
++      const first = ctx[0], last = ctx[ctx.length - 1];
++      this.position = {
++        sectionIndex: result.sec,
++        paragraphIndex: result.para,
++        charOffset: result.charOffset,
++        parentParaIndex: first.parentPara,
++        controlIndex: first.ctrlIdx,
++        cellIndex: last.cellIdx,
++        cellParaIndex: result.para,
++        isTextBox: last.isTextBox,
++        cellPath: ctx.map((entry, index) => ({
++          controlIndex: entry.ctrlIdx,
++          cellIndex: entry.cellIdx,
++          cellParaIndex: ctx[index + 1]?.parentPara ?? result.para,
++        })),
++      };
+     }
+     this.updateRect();
+   }
 @@ -856,11 +856,7 @@ export class CursorState {
        // End 키 후 Home 키 시 getLineInfo 가 다음 줄로 판정하여 charStart = 현재 위치 → 미이동.
        // atLineEnd 플래그가 설정된 상태에서 현재 위치가 줄 시작과 동일하면 이전 줄로 판정.
@@ -12639,10 +12781,222 @@ index 4a0ede6af..32dac4651 100644
      text_offset: usize,
      after_control: bool,
 diff --git a/src/document_core/queries/cursor_rect.rs b/src/document_core/queries/cursor_rect.rs
-index d4d46931d..31cbcff93 100644
+index d4d46931d..8671509ef 100644
 --- a/src/document_core/queries/cursor_rect.rs
 +++ b/src/document_core/queries/cursor_rect.rs
-@@ -3551,6 +3551,38 @@ impl DocumentCore {
+@@ -1604,7 +1604,7 @@ impl DocumentCore {
+         struct TextBoxBboxInfo {
+             section_index: usize,
+             parent_para_index: usize,
+-            control_index: usize,
++            cell_context: CellContext,
+             x: f64,
+             y: f64,
+             w: f64,
+@@ -1760,10 +1760,22 @@ impl DocumentCore {
+                 _ => None,
+             };
+             if let Some((si, pi, ci)) = textbox_meta {
+-                textbox_bboxes.push(TextBoxBboxInfo {
+-                    section_index: si,
++                let mut context = current_cell_ctx.clone().unwrap_or(CellContext {
++                    in_textbox: true,
+                     parent_para_index: pi,
++                    path: Vec::new(),
++                });
++                context.in_textbox = true;
++                context.path.push(CellPathEntry {
+                     control_index: ci,
++                    cell_index: 0,
++                    cell_para_index: 0,
++                    text_direction: 0,
++                });
++                textbox_bboxes.push(TextBoxBboxInfo {
++                    section_index: si,
++                    parent_para_index: context.parent_para_index,
++                    cell_context: context,
+                     x: node.bbox.x,
+                     y: node.bbox.y,
+                     w: node.bbox.width,
+@@ -1934,16 +1946,21 @@ impl DocumentCore {
+             // cell_index=0 (글상자 외곽 자체), cellParaIndex=0 (글상자 첫 paragraph)
+             // 캐럿: 글상자 좌상단 + 약간 안쪽 패딩.
+             let caret_h = (tb.h - 4.0).max(12.0).min(20.0);
++            let entries: Vec<_> = tb.cell_context.path.iter().map(|entry| format!(
++                "{{\"controlIndex\":{},\"cellIndex\":{},\"cellParaIndex\":{}}}",
++                entry.control_index, entry.cell_index, entry.cell_para_index,
++            )).collect();
++            let outer = &tb.cell_context.path[0];
+             format!(
+                 "{{\"sectionIndex\":{},\"paragraphIndex\":0,\"charOffset\":0,\
+                  \"parentParaIndex\":{},\"controlIndex\":{},\"cellIndex\":0,\"cellParaIndex\":0,\
+-                 \"cellPath\":[{{\"controlIndex\":{},\"cellIndex\":0,\"cellParaIndex\":0}}],\
++                 \"cellPath\":[{}],\
+                  \"isTextBox\":true,\
+                  \"cursorRect\":{{\"pageIndex\":{},\"x\":{:.1},\"y\":{:.1},\"height\":{:.1}}}}}",
+                 tb.section_index,
+                 tb.parent_para_index,
+-                tb.control_index,
+-                tb.control_index,
++                outer.control_index,
++                entries.join(","),
+                 page_num,
+                 tb.x + 2.0,
+                 tb.y + 2.0,
+@@ -1963,13 +1980,17 @@ impl DocumentCore {
+             let Some(ctx) = run.cell_context.as_ref() else {
+                 return false;
+             };
+-            let Some(outer) = ctx.path.first() else {
++            if ctx.path.is_empty() {
+                 return false;
+-            };
++            }
+             textbox_bboxes.iter().any(|tb| {
+                 tb.section_index == run.section_index
+                     && tb.parent_para_index == ctx.parent_para_index
+-                    && tb.control_index == outer.control_index
++                    && tb.cell_context.path.len() == ctx.path.len()
++                    && tb.cell_context.path.iter().zip(&ctx.path).enumerate().all(|(index, (a, b))| {
++                        a.control_index == b.control_index && a.cell_index == b.cell_index
++                            && (index + 1 == ctx.path.len() || a.cell_para_index == b.cell_para_index)
++                    })
+                     && x >= tb.x
+                     && x <= tb.x + tb.w
+                     && y >= tb.y
+@@ -2120,23 +2141,24 @@ impl DocumentCore {
+         // is_textbox 정확 판별: document의 실제 컨트롤 타입으로 재확인
+         for run in &mut runs {
+             if let Some(ref ctx) = run.cell_context {
+-                let Some(outer) = ctx.path.first() else {
++                if ctx.path.is_empty() {
+                     run.is_textbox = false;
+                     continue;
+-                };
+-                if outer.cell_index == 0 {
+-                    let is_shape = self
+-                        .document
+-                        .sections
+-                        .get(run.section_index)
+-                        .and_then(|s| s.paragraphs.get(ctx.parent_para_index))
+-                        .and_then(|p| p.controls.get(outer.control_index))
+-                        .map(|c| matches!(c, Control::Shape(_)))
+-                        .unwrap_or(false);
+-                    run.is_textbox = is_shape;
+-                } else {
+-                    run.is_textbox = false;
+                 }
++                let Some(inner) = ctx.path.last() else { continue };
++                let host_path: Vec<_> = ctx.path[..ctx.path.len() - 1]
++                    .iter()
++                    .map(|entry| (entry.control_index, entry.cell_index, entry.cell_para_index))
++                    .collect();
++                let host = if host_path.is_empty() {
++                    self.document.sections.get(run.section_index)
++                        .and_then(|section| section.paragraphs.get(ctx.parent_para_index))
++                } else {
++                    self.resolve_paragraph_by_path(run.section_index, ctx.parent_para_index, &host_path).ok()
++                };
++                run.is_textbox = inner.cell_index == 0
++                    && host.and_then(|para| para.controls.get(inner.control_index))
++                        .is_some_and(|ctrl| matches!(ctrl, Control::Shape(_)));
+             } else {
+                 run.is_textbox = false;
+             }
+@@ -2412,7 +2434,25 @@ impl DocumentCore {
+                 let char_offset = find_char_at_x(&run.char_positions, local_x);
+                 if run.cell_context.is_some() {
+                     let area = (run.bbox_w.max(0.0) * run.bbox_h.max(0.0) * 1000.0) as i64;
+-                    if hit_cell_area.map_or(true, |best_area| area < best_area) {
++                    // A child's text must remain selectable when an ancestor run overlaps it.
++                    let replace = hit_cell.map_or(true, |(index, _)| {
++                        let candidate = run.cell_context.as_ref().unwrap();
++                        let current = runs[index].cell_context.as_ref().unwrap();
++                        let shared_parent =
++                            candidate.parent_para_index == current.parent_para_index;
++                        let same_prefix = shared_parent
++                            && candidate.path.iter().zip(&current.path).all(|(a, b)| {
++                                a.control_index == b.control_index
++                                    && a.cell_index == b.cell_index
++                                    && a.cell_para_index == b.cell_para_index
++                            });
++                        if same_prefix && candidate.path.len() != current.path.len() {
++                            candidate.path.len() > current.path.len()
++                        } else {
++                            hit_cell_area.map_or(true, |best_area| area < best_area)
++                        }
++                    });
++                    if replace {
+                         hit_cell = Some((i, run.char_start + char_offset));
+                         hit_cell_area = Some(area);
+                     }
+@@ -3454,35 +3494,36 @@ impl DocumentCore {
+         &self,
+         section_idx: usize,
+         parent_para_idx: usize,
+-        control_idx: usize,
+-        cell_idx: usize,
++        path: &[(usize, usize, usize)],
+     ) -> Option<usize> {
+         use crate::renderer::render_tree::{RenderNode, RenderNodeType};
+ 
+         fn max_para_in_node(
+             node: &RenderNode,
+             parent_para: usize,
+-            ctrl_idx: usize,
+-            c_idx: usize,
++            path: &[(usize, usize, usize)],
+         ) -> Option<usize> {
+             let mut result: Option<usize> = None;
+             if let RenderNodeType::TextRun(ref tr) = node.node_type {
+                 if let Some(ref ctx) = tr.cell_context {
+-                    // 위와 동일 근거의 path.len()==1 가드. 이 함수는 max 를 취하므로
+-                    // 중첩 표 내부 run 이 섞이면 바깥 셀이 실제로 그려지지 않은
+-                    // 페이지에서도 "그려졌다"고 보고해 캐럿 클램프가 어긋난다.
+                     if ctx.parent_para_index == parent_para
+-                        && ctx.path.len() == 1
+-                        && ctx.path[0].control_index == ctrl_idx
+-                        && ctx.path[0].cell_index == c_idx
++                        && ctx.path.len() == path.len()
++                        && ctx.path.iter().zip(path).enumerate().all(
++                            |(index, (actual, expected))| {
++                                actual.control_index == expected.0
++                                    && actual.cell_index == expected.1
++                                    && (index + 1 == path.len()
++                                        || actual.cell_para_index == expected.2)
++                            },
++                        )
+                     {
+-                        let cp = ctx.path[0].cell_para_index;
++                        let cp = ctx.path.last()?.cell_para_index;
+                         result = Some(result.map_or(cp, |prev: usize| prev.max(cp)));
+                     }
+                 }
+             }
+             for child in &node.children {
+-                if let Some(cp) = max_para_in_node(child, parent_para, ctrl_idx, c_idx) {
++                if let Some(cp) = max_para_in_node(child, parent_para, path) {
+                     result = Some(result.map_or(cp, |prev: usize| prev.max(cp)));
+                 }
+             }
+@@ -3490,13 +3531,14 @@ impl DocumentCore {
+         }
+ 
+         // [#4128] 셀이 실제로 걸친 페이지에서만 검색 (target=None: 행/블록 겹침 수준)
++        let first = path.first()?;
+         let pages = self
+-            .find_pages_for_cell_position(section_idx, parent_para_idx, control_idx, cell_idx, None)
++            .find_pages_for_cell_position(section_idx, parent_para_idx, first.0, first.1, None)
+             .ok()?;
+         let mut max_para: Option<usize> = None;
+         for &page_num in &pages {
+             let tree = self.build_page_tree(page_num).ok()?;
+-            if let Some(cp) = max_para_in_node(&tree.root, parent_para_idx, control_idx, cell_idx) {
++            if let Some(cp) = max_para_in_node(&tree.root, parent_para_idx, path) {
+                 max_para = Some(max_para.map_or(cp, |prev: usize| prev.max(cp)));
+             }
+         }
+@@ -3551,6 +3593,38 @@ impl DocumentCore {
          path_json: &str,
          char_offset: usize,
          hint_page: Option<u32>,
@@ -12681,7 +13035,7 @@ index d4d46931d..31cbcff93 100644
      ) -> Result<String, HwpError> {
          use crate::renderer::layout::{CellContext, CellPathEntry};
          use crate::renderer::render_tree::{RenderNode, RenderNodeType};
-@@ -3695,6 +3727,7 @@ impl DocumentCore {
+@@ -3695,6 +3769,7 @@ impl DocumentCore {
              parent_para: usize,
              path: &[(usize, usize, usize)],
              offset: usize,
@@ -12689,7 +13043,7 @@ index d4d46931d..31cbcff93 100644
              page: u32,
              current_table_ctx: Option<CellContext>,
              current_cell_ctx: Option<CellContext>,
-@@ -3731,7 +3764,10 @@ impl DocumentCore {
+@@ -3731,7 +3806,10 @@ impl DocumentCore {
                      tr.char_start,
                  ) {
                      let cc = effective_char_count(tr);
@@ -12701,7 +13055,7 @@ index d4d46931d..31cbcff93 100644
                          let positions = if tr.char_overlap.is_some() && cc == 1 {
                              vec![0.0, node.bbox.width]
                          } else {
-@@ -3750,7 +3786,11 @@ impl DocumentCore {
+@@ -3750,7 +3828,11 @@ impl DocumentCore {
                              node.bbox.x + xr,
                              node.bbox.y,
                              node.bbox.height,
@@ -12714,7 +13068,7 @@ index d4d46931d..31cbcff93 100644
                          ));
                      }
                  }
-@@ -3763,6 +3803,7 @@ impl DocumentCore {
+@@ -3763,6 +3845,7 @@ impl DocumentCore {
                      parent_para,
                      path,
                      offset,
@@ -12722,7 +13076,7 @@ index d4d46931d..31cbcff93 100644
                      page,
                      table_ctx.clone(),
                      child_cell_ctx.clone(),
-@@ -3783,6 +3824,7 @@ impl DocumentCore {
+@@ -3783,6 +3866,7 @@ impl DocumentCore {
                  parent_para_idx,
                  &path,
                  char_offset,
@@ -12730,7 +13084,7 @@ index d4d46931d..31cbcff93 100644
                  page_num,
                  None,
                  None,
-@@ -3971,6 +4013,11 @@ impl DocumentCore {
+@@ -3971,6 +4055,11 @@ impl DocumentCore {
                      parent_para: usize,
                      path: &[(usize, usize, usize)],
                  ) -> bool {
@@ -12742,7 +13096,6 @@ index d4d46931d..31cbcff93 100644
                      if let RenderNodeType::TextRun(ref tr) = node.node_type {
                          return tr.cell_context.as_ref().map_or(false, |ctx| {
                              ctx.parent_para_index == parent_para
-
 diff --git a/rhwp-studio/src/ui/picture-props-dialog.ts b/rhwp-studio/src/ui/picture-props-dialog.ts
 index 0f3466ce9..04932c90a 100644
 --- a/rhwp-studio/src/ui/picture-props-dialog.ts
@@ -12894,3 +13247,52 @@ index 35d20dc3b..26a1ede19 100644
        });
      }
    }
+diff --git a/src/renderer/layout/table_cell_content.rs b/src/renderer/layout/table_cell_content.rs
+index b63873904..fb0d4734a 100644
+--- a/src/renderer/layout/table_cell_content.rs
++++ b/src/renderer/layout/table_cell_content.rs
+@@ -678,7 +678,7 @@ impl LayoutEngine {
+ 
+     /// 글상자/중첩 표 경로까지 가진 셀 도형을 레이아웃한다.
+     #[allow(clippy::too_many_arguments)]
+-    fn layout_cell_shape_with_parent_path(
++    pub(crate) fn layout_cell_shape_with_parent_path(
+         &self,
+         tree: &mut PageLayoutContext,
+         cell_node: &mut RenderNode,
+
+diff --git a/src/document_core/queries/doc_tree_nav.rs b/src/document_core/queries/doc_tree_nav.rs
+index 7b38a1e2a..f36f06676 100644
+--- a/src/document_core/queries/doc_tree_nav.rs
++++ b/src/document_core/queries/doc_tree_nav.rs
+@@ -322,6 +322,14 @@ impl DocumentCore {
+         };
+ 
+         for entry in context {
++            let is_textbox = paragraphs
++                .get(entry.parent_para)
++                .and_then(|para| para.controls.get(entry.ctrl_idx))
++                .map_or(entry.is_textbox, |ctrl| match ctrl {
++                    Control::Shape(shape) => get_textbox_from_shape(shape.as_ref()).is_some(),
++                    Control::Table(_) => false,
++                    _ => entry.is_textbox,
++                });
+             let ctrl_text_pos = if let Some(para) = paragraphs.get(entry.parent_para) {
+                 let positions = find_logical_control_positions(para);
+                 positions
+@@ -337,13 +345,13 @@ impl DocumentCore {
+                 ctrl_idx: entry.ctrl_idx,
+                 ctrl_text_pos,
+                 cell_idx: entry.cell_idx,
+-                is_textbox: entry.is_textbox,
++                is_textbox,
+             });
+ 
+             // 다음 depth를 위해 현재 컨트롤 내부 paragraphs로 이동
+             if let Some(para) = paragraphs.get(entry.parent_para) {
+                 if let Some(ctrl) = para.controls.get(entry.ctrl_idx) {
+-                    if entry.is_textbox {
++                    if is_textbox {
+                         if let Control::Shape(s) = ctrl {
+                             if let Some(tb) = get_textbox_from_shape(s.as_ref()) {
+                                 paragraphs = &tb.paragraphs;
