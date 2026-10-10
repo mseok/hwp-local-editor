@@ -14368,3 +14368,19 @@ index c2c094fec..06e42704f 100644
    // 단일 선택 리사이즈 (회전 반영: pivot 고정, 위치도 갱신)
    const newBbox = calcResizedBboxRotated(state, e, zoom);
    const rotAngle = (state.rotationAngle ?? 0) as number;
+diff --git a/src/document_core/commands/object_ops/shape.rs b/src/document_core/commands/object_ops/shape.rs
+index 9d327c4bd..29881cdf5 100644
+--- a/src/document_core/commands/object_ops/shape.rs
++++ b/src/document_core/commands/object_ops/shape.rs
+@@ -1306,7 +1306,10 @@ impl DocumentCore {
+                 current_width: width,
+                 current_height: height,
+                 local_file_version: 1,
+-                flip: 0x00080000, // 한컴 기본값
++                // 한컴 저장본은 글상자 도형에 0x0108_0000(글상자 0x0100_0000 + 0x0008_0000)을,
++                // 글상자 없는 도형에 0x0008_0000을 담는다(converters/hwpx_to_hwp.rs 와 같은 규칙).
++                // 글상자인데 0x0100_0000 이 없으면 한컴 Quick Look 이 문서를 거부한다.
++                flip: if has_textbox { 0x0108_0000 } else { 0x0008_0000 },
+                 rotation_center: crate::model::Point {
+                     x: (width / 2) as i32,
+                     y: (height / 2) as i32,
