@@ -4839,7 +4839,7 @@ index 536044424..2036ac488 100644
  mod row_cut_tests {
      use super::{
 diff --git a/src/renderer/layout/table_partial.rs b/src/renderer/layout/table_partial.rs
-index d7b7c9c..561cb40 100644
+index d7b7c9cba..a007c70ad 100644
 --- a/src/renderer/layout/table_partial.rs
 +++ b/src/renderer/layout/table_partial.rs
 @@ -1811,25 +1811,56 @@ impl LayoutEngine {
@@ -4918,6 +4918,56 @@ index d7b7c9c..561cb40 100644
              // 온전한 셀은 그림 띠와 빈 마지막 줄의 닫힌 원본 프레임을 함께 소비한다.
              // 실제 내용 컷은 그 조각의 기존 유닛 소유를 유지한다.
              let stored_empty_picture_frame = (!cell_was_split && !is_rowbreak_straddle)
+@@ -3281,13 +3312,13 @@ impl LayoutEngine {
+                                     // [Task #1138] 분할 표 셀 컨텍스트
+                                     let table_cell_ctx = Some((
+                                         section_index,
+-                                        para_index,
++                                        cell_context.parent_para_index,
+                                         control_index,
+                                         cell_idx,
+                                         cp_idx,
+                                         ctrl_idx,
+                                     ));
+-                                    self.layout_cell_shape(
++                                    self.layout_cell_shape_with_parent_path(
+                                         tree,
+                                         &mut cell_node,
+                                         shape,
+@@ -3298,6 +3329,7 @@ impl LayoutEngine {
+                                         bin_data_content,
+                                         clamp_header_negative_para_offset,
+                                         table_cell_ctx,
++                                        &cell_context.path,
+                                     );
+                                     inline_x += shape_w;
+                                 } else {
+@@ -3313,7 +3345,7 @@ impl LayoutEngine {
+                                     // [Task #1138] 분할 표 셀 컨텍스트
+                                     let table_cell_ctx = Some((
+                                         section_index,
+-                                        para_index,
++                                        cell_context.parent_para_index,
+                                         control_index,
+                                         cell_idx,
+                                         cp_idx,
+@@ -3340,7 +3372,7 @@ impl LayoutEngine {
+                                             shape_for_layout.common_mut().vertical_offset = 0;
+                                         }
+                                     }
+-                                    self.layout_cell_shape(
++                                    self.layout_cell_shape_with_parent_path(
+                                         tree,
+                                         &mut cell_node,
+                                         &shape_for_layout,
+@@ -3351,6 +3383,7 @@ impl LayoutEngine {
+                                         bin_data_content,
+                                         clamp_header_negative_para_offset,
+                                         table_cell_ctx,
++                                        &cell_context.path,
+                                     );
+                                     let is_top_and_bottom_shape = matches!(
+                                         shape.common().text_wrap,
 diff --git a/src/renderer/layout/tests.rs b/src/renderer/layout/tests.rs
 index 183873b..64e7299 100644
 --- a/src/renderer/layout/tests.rs
@@ -12292,9 +12342,18 @@ index 6ec166661..d0e911cc5 100644
    }
  }
 diff --git a/rhwp-studio/src/engine/cursor.ts b/rhwp-studio/src/engine/cursor.ts
-index 22c194744..8043e83d6 100644
+index 22c194744..303bc627a 100644
 --- a/rhwp-studio/src/engine/cursor.ts
 +++ b/rhwp-studio/src/engine/cursor.ts
+@@ -1,7 +1,7 @@
+ import type { DocumentPosition, CursorRect, LineInfo, CellPathEntry, NavContextEntry, CellBbox } from '@/core/types';
+ import type { WasmBridge } from '@/core/wasm-bridge';
+ // [#2756] 셀 좌표 축 헬퍼는 command.ts 와 단일 정의를 공유한다(축 유도 복제 금지).
+-import { cellAxisPath, type FocusedCellCursorGeometry } from './command';
++import { cellAxisPath, cellParaIndexOf, type FocusedCellCursorGeometry } from './command';
+ // 제외 셀 Set 의 키 형식은 조립하는 쪽과 조회하는 쪽이 반드시 같아야 한다 → 단일 정의.
+ import { excludedCellKey } from './cell-block-format';
+ import type { CellSelectionPhase, CellSelectionPoint } from './cell-selection-phase';
 @@ -636,6 +636,15 @@ export class CursorState {
    /** 현재 DocumentPosition에서 NavContextEntry[] 구성 */
    private buildNavContext(): NavContextEntry[] {
@@ -12311,6 +12370,15 @@ index 22c194744..8043e83d6 100644
      if (pos.isTextBox && pos.parentParaIndex !== undefined && pos.controlIndex !== undefined) {
        return [{
          parentPara: pos.parentParaIndex,
+@@ -653,7 +662,7 @@ export class CursorState {
+   private getEffectivePara(context: NavContextEntry[]): number {
+     if (context.length > 0) {
+       // 컨테이너 내부에서는 cellParaIndex가 실제 문단 인덱스
+-      return this.position.cellParaIndex ?? this.position.paragraphIndex;
++      return cellParaIndexOf(this.position) ?? this.position.paragraphIndex;
+     }
+     return this.position.paragraphIndex;
+   }
 @@ -673,31 +682,22 @@ export class CursorState {
          charOffset: result.charOffset,
        };
@@ -13248,11 +13316,44 @@ index 35d20dc3b..26a1ede19 100644
      }
    }
 diff --git a/src/renderer/layout/table_cell_content.rs b/src/renderer/layout/table_cell_content.rs
-index b63873904..fb0d4734a 100644
+index b63873904..5409d48b0 100644
 --- a/src/renderer/layout/table_cell_content.rs
 +++ b/src/renderer/layout/table_cell_content.rs
-@@ -678,7 +678,7 @@ impl LayoutEngine {
+@@ -645,40 +645,9 @@ impl LayoutEngine {
+         }
+     }
  
+-    /// 테이블 셀 내 도형(Shape) 컨트롤을 레이아웃한다.
+-    #[allow(clippy::too_many_arguments)]
+-    pub(crate) fn layout_cell_shape(
+-        &self,
+-        tree: &mut PageLayoutContext,
+-        cell_node: &mut RenderNode,
+-        shape: &crate::model::shape::ShapeObject,
+-        inner_area: &LayoutRect,
+-        para_y: f64,
+-        para_alignment: Alignment,
+-        styles: &ResolvedStyleSet,
+-        bin_data_content: &[BinDataContent],
+-        clamp_header_negative_para_offset: bool,
+-        // [Task #1138] 표 셀 컨텍스트: (section_idx, outer_para_idx, outer_table_ctrl_idx, cell_idx, cell_para_idx, inner_control_idx)
+-        table_cell_ctx: Option<(usize, usize, usize, usize, usize, usize)>,
+-    ) {
+-        self.layout_cell_shape_with_parent_path(
+-            tree,
+-            cell_node,
+-            shape,
+-            inner_area,
+-            para_y,
+-            para_alignment,
+-            styles,
+-            bin_data_content,
+-            clamp_header_negative_para_offset,
+-            table_cell_ctx,
+-            &[],
+-        );
+-    }
+-
      /// 글상자/중첩 표 경로까지 가진 셀 도형을 레이아웃한다.
      #[allow(clippy::too_many_arguments)]
 -    fn layout_cell_shape_with_parent_path(
@@ -13260,7 +13361,6 @@ index b63873904..fb0d4734a 100644
          &self,
          tree: &mut PageLayoutContext,
          cell_node: &mut RenderNode,
-
 diff --git a/src/document_core/queries/doc_tree_nav.rs b/src/document_core/queries/doc_tree_nav.rs
 index 7b38a1e2a..f36f06676 100644
 --- a/src/document_core/queries/doc_tree_nav.rs

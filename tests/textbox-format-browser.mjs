@@ -61,7 +61,36 @@ for (const depth of [2, 3]) {
     } finally {nested.free();}
   } finally {owner.free();}
 }
-files.unshift(...files.splice(2));
+for (const inline of [true, false]) {
+  const owner = new HwpDocument(await readFile('.cache/rhwp/saved/blank2010.hwp'));
+  try {
+    owner.createBlankDocument(); owner.insertText(0, 0, 0, 'BODY-UNCHANGED'); owner.splitParagraph(0, 0, 14);
+    owner.insertText(0, 1, 0, 'HOST-UNCHANGED'); owner.splitParagraph(0, 1, 14);
+    owner.createTableEx(json({sectionIdx: 0, paraIdx: 1, charOffset: 0, rowCount: 16, colCount: 2, treatAsChar: false, colWidths: [28000, 4000], rowHeights: Array(16).fill(7000)}));
+    for (let cell = 0; cell < 32; cell++) {
+      owner.insertTextInCell(0, 1, 0, cell, 0, 0, 'OUTER-' + cell);
+      for (let para = 1; para < 5; para++) {
+        owner.splitParagraphInCell(0, 1, 0, cell, para - 1, owner.getCellParagraphLength(0, 1, 0, cell, para - 1));
+        owner.insertTextInCell(0, 1, 0, cell, para, 0, 'LINE-' + cell + '-' + para);
+      }
+    }
+    owner.createTable(0, 2, 0, 1, 2); owner.insertTextInCell(0, 2, 0, 0, 0, 0, 'CELL-UNCHANGED');
+    const entries = unzip(Buffer.from(owner.exportHwpx()));
+    const shape = inline ? shapeXml : shapeXml.replace('treatAsChar="1"', 'treatAsChar="0"');
+    entries.set('Contents/section0.xml', Buffer.from(entries.get('Contents/section0.xml').toString().replace('<hp:t>OUTER-24</hp:t>', shape + '<hp:t>OUTER-24</hp:t>')));
+    const continued = new HwpDocument(zip(entries));
+    try {
+      const address = [{controlIndex: 0, cellIndex: 24, cellParaIndex: 0}, {controlIndex: 0, cellIndex: 0, cellParaIndex: 0}];
+      assert.equal(continued.getTextInCellByPath(0, 1, json(address), 0, 100), 'BOX-FIRST');
+      assert(continued.pageCount() > 1);
+      for (const format of ['hwp', 'hwpx']) {
+        const file = path.join(root, 'continued-' + (inline ? 'inline' : 'floating') + '.' + format);
+        await writeFile(file, format === 'hwp' ? continued.exportHwp() : continued.exportHwpx()); files.push(file);
+      }
+    } finally {continued.free();}
+  } finally {owner.free();}
+}
+files.unshift(...files.splice(6));
 const data = await createWorkspace(files, path.join(root, 'output')), manifest = path.join(root, 'workspace.json');
 await writeFile(manifest, json(data));
 const port = 18880, base = 'http://127.0.0.1:' + port;
@@ -72,33 +101,42 @@ const ready = p => p.waitForFunction(() => window.editorReady, null, {timeout: 4
 const pass = name => {report.checks.push(name); console.log('PASS', name);};
 async function save(page, revision) {await page.getByRole('button', {name: '결과 파일 저장', exact: true}).click(); await page.locator('#delivery[data-revision="' + revision + '"]').waitFor();}
 async function editMenu(frame, label) {await frame.locator('#menu-bar').getByText('편집', {exact: true}).click(); await frame.locator('#menu-bar').getByText(label, {exact: true}).click();}
-async function enter(page, source) {
-  const tree = JSON.parse(source.getPageRenderTree(0)), texts = [];
-  function visit(node) {if (node.type === 'TextRun' && node.text === 'BOX-FIRST') texts.push(node); for (const child of node.children || []) visit(child);}
-  visit(tree); assert.equal(texts.length, 1);
-  const canvas = page.frameLocator('#editor iframe').locator('#scroll-container canvas').first();
-  const size = await canvas.evaluate(el => ({width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height})), b = texts[0].bbox;
-  const hit = JSON.parse(source.hitTest(0, b.x + b.w / 2, b.y + b.h / 2));
+async function enter(page, source, text = 'BOX-FIRST') {
+  const texts = [];
+  for (let index = 0; index < source.pageCount(); index++) {
+    const tree = JSON.parse(source.getPageRenderTree(index));
+    function visit(node) {if (node.type === 'TextRun' && node.text === text) texts.push({node, tree, index}); for (const child of node.children || []) visit(child);}
+    visit(tree);
+  }
+  assert.equal(texts.length, 1);
+  const {node, tree, index} = texts[0], b = node.bbox;
+  assert(b.y >= 0 && b.y + b.h <= tree.bbox.h, 'Textbox text must be visible inside its owning page');
+  const canvas = page.frameLocator('#editor iframe').locator('#scroll-container canvas').nth(index);
+  const size = await canvas.evaluate(el => ({width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height}));
+  const hit = JSON.parse(source.hitTest(index, b.x + b.w / 2, b.y + b.h / 2));
   assert.equal(hit.isTextBox, true, 'The rendered textbox text must resolve to its own container');
-  assert.equal(source.getTextInCellByPath(0, hit.parentParaIndex, json(hit.cellPath), 0, 100), 'BOX-FIRST');
+  assert.equal(source.getTextInCellByPath(0, hit.parentParaIndex, json(hit.cellPath), 0, 100), text);
   const caret = JSON.parse(source.getCursorRectByPath(0, hit.parentParaIndex, json(hit.cellPath), hit.charOffset));
-  assert.equal(caret.pageIndex, 0);
+  assert.equal(caret.pageIndex, index);
   assert(caret.x >= b.x - 1 && caret.x <= b.x + b.w + 1, 'The complete textbox path must resolve its rendered caret');
   await canvas.dblclick({position: {x: (b.x + b.w / 2) * size.width / tree.bbox.w, y: (b.y + b.h / 2) * size.height / tree.bbox.h}});
 }
-function verify(source, result, changed, selected = [0], depth = 1) {
+function verify(source, result, changed, selected = [0], depth = 1, continued = false, alignment = 'center') {
   assert.equal(result.getTextFileUnicode(true), source.getTextFileUnicode(true));
   const address = Array.from({length: depth}, () => ({controlIndex: 0, cellIndex: 0, cellParaIndex: 0}));
+  if (continued) address[0].cellIndex = 24;
   if (depth === 1) assert.equal(result.getShapeProperties(0, 1, 0), source.getShapeProperties(0, 1, 0));
   else assert.equal(result.getCellShapePropertiesByPath(0, 1, json(address.slice(0, -1)), 0), source.getCellShapePropertiesByPath(0, 1, json(address.slice(0, -1)), 0));
   for (let level = 1; level < depth; level++) {
     const target = address.slice(0, level);
     assert.equal(result.getTablePropertiesByPath(0, 1, json(target)), source.getTablePropertiesByPath(0, 1, json(target)));
-    for (const cell of [0, 1]) {
+    for (const cell of Array.from({length: continued ? 32 : 2}, (_, index) => index)) {
       assert.equal(result.getCellPropertiesByPath(0, 1, json(target), cell), source.getCellPropertiesByPath(0, 1, json(target), cell));
-      const paragraph = structuredClone(target); paragraph.at(-1).cellIndex = cell;
-      assert.equal(result.getCellParaPropertiesAtByPath(0, 1, json(paragraph)), source.getCellParaPropertiesAtByPath(0, 1, json(paragraph)));
-      assert.equal(result.getCellCharPropertiesAtByPath(0, 1, json(paragraph), 0), source.getCellCharPropertiesAtByPath(0, 1, json(paragraph), 0));
+      for (let para = 0; para < (continued ? 5 : 1); para++) {
+        const paragraph = structuredClone(target); paragraph.at(-1).cellIndex = cell; paragraph.at(-1).cellParaIndex = para;
+        assert.equal(result.getCellParaPropertiesAtByPath(0, 1, json(paragraph)), source.getCellParaPropertiesAtByPath(0, 1, json(paragraph)));
+        assert.equal(result.getCellCharPropertiesAtByPath(0, 1, json(paragraph), 0), source.getCellCharPropertiesAtByPath(0, 1, json(paragraph), 0));
+      }
     }
   }
   assert.equal(result.getTableProperties(0, 2, 0), source.getTableProperties(0, 2, 0));
@@ -109,7 +147,7 @@ function verify(source, result, changed, selected = [0], depth = 1) {
     const p = json(target);
     assert.equal(result.getTextInCellByPath(0, 1, p, 0, 100), source.getTextInCellByPath(0, 1, p, 0, 100));
     const before = JSON.parse(source.getCellParaPropertiesAtByPath(0, 1, p)), after = JSON.parse(result.getCellParaPropertiesAtByPath(0, 1, p));
-    assert.equal(after.alignment, changed && selected.includes(para) ? 'center' : before.alignment, 'Textbox paragraph ' + para);
+    assert.equal(after.alignment, changed && selected.includes(para) ? alignment : before.alignment, 'Textbox paragraph ' + para);
     delete before.alignment; delete after.alignment; delete before.paraShapeId; delete after.paraShapeId;
     assert.deepEqual(after, before); assert.equal(result.getCellCharPropertiesAtByPath(0, 1, p, 0), source.getCellCharPropertiesAtByPath(0, 1, p, 0));
   }
@@ -119,8 +157,8 @@ try {
   const context = await browser.newContext({viewport: {width: 1280, height: 1050}});
   context.on('page', p => {p.on('pageerror', e => report.errors.push(e.message)); p.on('console', m => {if (['warning', 'error'].includes(m.type())) report.warnings.push(m.text());}); p.on('request', r => {if (!r.url().startsWith(base + '/') && !/^(blob|data):/.test(r.url())) report.externalRequests.push(r.url());});});
   for (const entry of data.documents) {
-    const source = new HwpDocument(await readFile(entry.source)), page = await context.newPage(), frame = page.frameLocator('#editor iframe'), depth = Number(entry.source.match(/depth-(\d)/)?.[1] ?? 1);
-    const verifyEntry = (changed, selected) => verify(source, result, changed, selected, depth);
+    const source = new HwpDocument(await readFile(entry.source)), page = await context.newPage(), frame = page.frameLocator('#editor iframe'), continued = entry.name.startsWith('continued-'), depth = continued ? 2 : Number(entry.source.match(/depth-(\d)/)?.[1] ?? 1);
+    const verifyEntry = (changed, selected, alignment) => verify(source, result, changed, selected, depth, continued, alignment);
     let result;
     try {
       await page.goto(base + '/editor?id=' + entry.id); await ready(page); await enter(page, source);
@@ -159,6 +197,22 @@ try {
       result = new HwpDocument(await readFile(entry.output));
       try {verifyEntry(true, [0, 1]); assert.equal(digest(await readFile(entry.source)), entry.sourceSha256); const receipt = JSON.parse(await readFile(entry.output + '.receipt.json')); assert.equal(receipt.outputSha256, digest(await readFile(entry.output))); assert.equal(receipt.textSha256, digest(JSON.parse(result.getTextFileUnicode(true)))); assert.equal(receipt.contentLoss.count, 0);} finally {result.free();}
       pass(entry.name + ' multi-paragraph textbox disk reopening and fingerprints');
+      result = new HwpDocument(await readFile(entry.output));
+      try {await enter(page, result, 'BOX-SECOND');} finally {result.free();}
+      await input.press('Home'); await input.press('ArrowLeft'); await input.press('Home');
+      for (let i = 0; i < 20; i++) await input.press('Shift+ArrowRight');
+      await frame.getByRole('button', {name: '왼쪽 정렬', exact: true}).click(); await save(page, 7);
+      result = new HwpDocument(await readFile(entry.output)); try {verifyEntry(true, [0, 1], 'left');} finally {result.free();}
+      pass(entry.name + ' second-paragraph backward navigation keeps the textbox path');
+      await editMenu(frame, '되돌리기'); await save(page, 8);
+      result = new HwpDocument(await readFile(entry.output)); try {verifyEntry(true, [0, 1]);} finally {result.free();}
+      await editMenu(frame, '다시 실행');
+      await page.waitForFunction(() => {const revision = localStudio.element.contentWindow.rhwpStudio.localRecovery.read(Number.MAX_SAFE_INTEGER).revision; return revision > 0 && revision === Number(document.querySelector('#status').dataset.savedRevision);});
+      await page.reload(); await ready(page); await save(page, 9);
+      await page.goto(base + '/editor?id=' + entry.id + '&result=1'); await ready(page);
+      result = new HwpDocument(await readFile(entry.output));
+      try {verifyEntry(true, [0, 1], 'left'); assert.equal(digest(await readFile(entry.source)), entry.sourceSha256); const receipt = JSON.parse(await readFile(entry.output + '.receipt.json')); assert.equal(receipt.outputSha256, digest(await readFile(entry.output))); assert.equal(receipt.contentLoss.count, 0);} finally {result.free();}
+      pass(entry.name + ' backward navigation format undo, redo, recovery and disk reopening');
     } finally {source.free(); await page.close();}
   }
   assert.deepEqual(report.errors, []); assert.deepEqual(report.warnings, []); assert.deepEqual(report.externalRequests, []); pass('No browser errors, warnings or external requests');
