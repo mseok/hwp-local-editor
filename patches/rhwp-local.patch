@@ -12414,7 +12414,7 @@ index 7fd48f994..e855c1d4c 100755
      if (copyHeaderFooterSelection.call(this, e)) this.deleteSelection();
      return;
 diff --git a/rhwp-studio/index.html b/rhwp-studio/index.html
-index 16f230b54..50af4c287 100644
+index 16f230b54..88d83d668 100644
 --- a/rhwp-studio/index.html
 +++ b/rhwp-studio/index.html
 @@ -391,6 +391,9 @@
@@ -12427,6 +12427,15 @@ index 16f230b54..50af4c287 100644
            <div class="md-item disabled" data-cmd="table:cell-height-equal"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.cellHeightEqual.label">셀 높이를 같게</span><span class="md-shortcut">H</span></div>
            <div class="md-item disabled" data-cmd="table:cell-width-equal"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.cellWidthEqual.label">셀 너비를 같게</span><span class="md-shortcut">W</span></div>
            <div class="md-item disabled" data-cmd="table:transpose-copy"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.transposeCopy.label">행/열 바꿈 복사</span></div>
+@@ -497,7 +500,7 @@
+         <button class="tb-btn" data-cmd="page:headerfooter-prev" title="이전" data-i18n-title="command.page.headerfooterPrev.tooltip"><span class="tb-icon-text">◀</span><span class="tb-label" data-i18n="command.page.headerfooterPrev.toolbarLabel">이전</span></button>
+         <button class="tb-btn" data-cmd="page:headerfooter-next" title="다음" data-i18n-title="command.page.headerfooterNext.tooltip"><span class="tb-icon-text">▶</span><span class="tb-label" data-i18n="command.page.headerfooterNext.toolbarLabel">다음</span></button>
+         <span class="tb-sep"></span>
+-        <button class="tb-btn" data-cmd="page:headerfooter-close" title="닫기" data-i18n-title="command.page.headerfooterClose.tooltip"><span class="tb-icon-text">✕</span><span class="tb-label" data-i18n="command.page.headerfooterClose.toolbarLabel">닫기</span></button>
++        <button class="tb-btn" data-cmd="page:headerfooter-close" aria-label="머리말/꼬리말 닫기" title="닫기" data-i18n-title="command.page.headerfooterClose.tooltip"><span class="tb-icon-text">✕</span><span class="tb-label" data-i18n="command.page.headerfooterClose.toolbarLabel">닫기</span></button>
+         <button class="tb-btn tb-hf-delete" data-cmd="page:headerfooter-delete" title="지우기" data-i18n-title="command.page.headerfooterDelete.tooltip"><span class="tb-icon-text">🗑</span><span class="tb-label" data-i18n="command.page.headerfooterDelete.toolbarLabel">지우기</span></button>
+         <span class="tb-sep"></span>
+         <button class="tb-btn" data-cmd="page:insert-field-pagenum" title="쪽 번호 삽입" data-i18n-title="command.page.insertFieldPagenum.tooltip"><span class="tb-icon-text">#</span><span class="tb-label" data-i18n="command.page.insertFieldPagenum.toolbarLabel">쪽번호</span></button>
 diff --git a/rhwp-studio/src/core/mutation-method-registry.ts b/rhwp-studio/src/core/mutation-method-registry.ts
 index 2d05c75e1..d2fcb05a1 100755
 --- a/rhwp-studio/src/core/mutation-method-registry.ts
@@ -12466,7 +12475,7 @@ index 2d05c75e1..d2fcb05a1 100755
    'getCellCharPropertiesAtByPath', 'getCharShapeRunsInCellByPath',
  ];
 diff --git a/rhwp-studio/src/engine/command.ts b/rhwp-studio/src/engine/command.ts
-index 6ec166661..d0e911cc5 100644
+index 6ec166661..78701ca35 100644
 --- a/rhwp-studio/src/engine/command.ts
 +++ b/rhwp-studio/src/engine/command.ts
 @@ -1348,7 +1348,7 @@ export class ApplyCharFormatCommand implements EditCommand {
@@ -12508,7 +12517,26 @@ index 6ec166661..d0e911cc5 100644
    wasm.setCellParaShapeId(
      target.sec,
      target.parentPara,
-@@ -2006,6 +2015,7 @@ export class MoveTableCommand implements EditCommand {
+@@ -1568,7 +1577,17 @@ export class InsertTextInHeaderFooterCommand implements EditCommand {
+   }
+ 
+   editContext(): EditContext { return this.lastContext; }
+-  mergeWith(): null { return null; }
++
++  /** 본문 InsertTextCommand처럼 같은 머리말/꼬리말 문단에 이어서 친 글자는 한 undo 단위로 묶는다. */
++  mergeWith(other: EditCommand): EditCommand | null {
++    if (!(other instanceof InsertTextInHeaderFooterCommand)) return null;
++    if (other.target.sectionIdx !== this.target.sectionIdx || other.target.isHeader !== this.target.isHeader
++      || other.target.applyTo !== this.target.applyTo || other.paraIdx !== this.paraIdx) return null;
++    if (other.charOffset !== this.charOffset + charCount(this.text)) return null;
++    if (other.timestamp - this.timestamp > 300) return null;
++    if (other.text.includes('\n') || other.text.includes('\t')) return null;
++    return new InsertTextInHeaderFooterCommand(this.target, this.paraIdx, this.charOffset, this.text + other.text);
++  }
+ }
+ 
+ /**
+@@ -2006,6 +2025,7 @@ export class MoveTableCommand implements EditCommand {
  
    private resultPpi: number;
    private resultCi: number;
@@ -12516,7 +12544,7 @@ index 6ec166661..d0e911cc5 100644
  
    constructor(
      private sec: number,
-@@ -2016,17 +2026,24 @@ export class MoveTableCommand implements EditCommand {
+@@ -2016,17 +2036,24 @@ export class MoveTableCommand implements EditCommand {
      resultPpi: number,
      resultCi: number,
      timestamp?: number,
@@ -12543,7 +12571,7 @@ index 6ec166661..d0e911cc5 100644
    }
  
    undo(wasm: WasmBridge): DocumentPosition {
-@@ -2035,10 +2052,21 @@ export class MoveTableCommand implements EditCommand {
+@@ -2035,10 +2062,21 @@ export class MoveTableCommand implements EditCommand {
      // stale this.ppi/this.ci 를 그대로 반환했다. 표 이동과 문단 구조 변경(삽입/삭제/병합)이
      // 같은 세션에서 섞이면 undo 후 커서가 존재하지 않거나 엉뚱한 문단을 가리킬 수 있다 —
      // execute() 와 대칭으로 반환값을 캡처해 this.ppi/this.ci 를 갱신한다.
@@ -12567,7 +12595,7 @@ index 6ec166661..d0e911cc5 100644
    }
  
    mergeWith(other: EditCommand): EditCommand | null {
-@@ -2046,6 +2074,7 @@ export class MoveTableCommand implements EditCommand {
+@@ -2046,6 +2084,7 @@ export class MoveTableCommand implements EditCommand {
      if (other.sec !== this.sec) return null;
      // 연속 이동: 이전 결과 위치 == 다음 시작 위치
      if (other.ppi !== this.resultPpi || other.ci !== this.resultCi) return null;
@@ -12575,7 +12603,7 @@ index 6ec166661..d0e911cc5 100644
      if (other.timestamp - this.timestamp > 500) return null;
  
      return new MoveTableCommand(
-@@ -2054,6 +2083,7 @@ export class MoveTableCommand implements EditCommand {
+@@ -2054,6 +2093,7 @@ export class MoveTableCommand implements EditCommand {
        this.deltaV + other.deltaV,
        other.resultPpi, other.resultCi,
        this.timestamp,

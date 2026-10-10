@@ -19,6 +19,7 @@
     "test:cell-block": "node tests/cell-block-browser.mjs",
     "test:textbox-format": "node tests/textbox-format-browser.mjs",
     "test:text-shape": "node tests/text-shape-browser.mjs",
+    "test:header-footer": "node tests/header-footer-browser.mjs",
     "test:special-object": "node tests/special-object-browser.mjs",
     "test:nested": "node tests/nested-browser.mjs",
     "test:table-split": "node tests/table-split-browser.mjs",
