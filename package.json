@@ -17,6 +17,7 @@
     "test:complex": "node tests/complex-browser.mjs",
     "test:format": "node tests/format-browser.mjs",
     "test:cell-block": "node tests/cell-block-browser.mjs",
+    "test:textbox-format": "node tests/textbox-format-browser.mjs",
     "test:special-object": "node tests/special-object-browser.mjs",
     "test:nested": "node tests/nested-browser.mjs",
     "test:table-split": "node tests/table-split-browser.mjs",

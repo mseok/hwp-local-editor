@@ -95,6 +95,7 @@ npm run test:agent
 npm run test:complex
 npm run test:format
 npm run test:cell-block
+npm run test:textbox-format
 npm run test:special-object
 npm run test:nested
 npm run test:table-split

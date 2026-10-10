@@ -8855,7 +8855,7 @@ index c6de9bdb5..7ac621c72 100644
    },
    {
 diff --git a/rhwp-studio/src/engine/input-handler.ts b/rhwp-studio/src/engine/input-handler.ts
-index 043ee77ee..be084458a 100644
+index 043ee77ee..884f3115b 100644
 --- a/rhwp-studio/src/engine/input-handler.ts
 +++ b/rhwp-studio/src/engine/input-handler.ts
 @@ -19,6 +19,7 @@ import { VirtualScroll } from '@/view/virtual-scroll';
@@ -8886,7 +8886,7 @@ index 043ee77ee..be084458a 100644
     */
    private getSelectedCellBlock(): SelectedCellBlock | null {
      if (!this.cursor.isInCellSelectionMode()) return null;
-@@ -2512,23 +2514,34 @@ export class InputHandler {
+@@ -2512,23 +2514,33 @@ export class InputHandler {
  
    /** 셀 블록 안 모든 셀의 모든 문단을 문단 서식 대상으로 만든다 */
    private getParaFormatTargetsForCellBlock(block: SelectedCellBlock): ParaFormatTarget[] {
@@ -8903,14 +8903,14 @@ index 043ee77ee..be084458a 100644
  
    private getParaFormatTargetsForRange(start: DocumentPosition, end: DocumentPosition): ParaFormatTarget[] {
      if (this.cursor.isInHeaderFooter() || this.cursor.isInFootnote()) return [];
-     if (start.isTextBox || end.isTextBox) return [];
+-    if (start.isTextBox || end.isTextBox) return [];
 -    if ((start.cellPath?.length ?? 0) > 1 || (end.cellPath?.length ?? 0) > 1) return [];
  
      const startInCell = start.parentParaIndex !== undefined;
      const endInCell = end.parentParaIndex !== undefined;
      if (startInCell || endInCell) {
        if (!startInCell || !endInCell) return [];
-+      if ((start.cellPath?.length ?? 0) > 1 || (end.cellPath?.length ?? 0) > 1) {
++      if (start.isTextBox || end.isTextBox || (start.cellPath?.length ?? 0) > 1 || (end.cellPath?.length ?? 0) > 1) {
 +        if (!isSameSelectionCellContainer(start, end)) return [];
 +        const path = cellAxisPath(start);
 +        const last = path[path.length - 1];
@@ -8925,7 +8925,7 @@ index 043ee77ee..be084458a 100644
        if (start.sectionIndex !== end.sectionIndex) return [];
        if (start.parentParaIndex !== end.parentParaIndex) return [];
        const startPath = start.cellPath?.[0];
-@@ -4831,16 +4844,24 @@ export class InputHandler {
+@@ -4831,16 +4843,24 @@ export class InputHandler {
    }
  
    /** 표 캡션 텍스트 편집 모드 진입 (cellIndex=65534로 캡션 구분) */
@@ -8954,7 +8954,7 @@ index 043ee77ee..be084458a 100644
      });
      this.cursor.resetPreferredX();
      this.updateCaret();
-@@ -4859,6 +4880,8 @@ export class InputHandler {
+@@ -4859,6 +4879,8 @@ export class InputHandler {
    /** 현재 커서 위치를 반환한다 */
    getCursorPosition(): DocumentPosition { return this.cursor.getPosition(); }
  
@@ -8963,7 +8963,7 @@ index 043ee77ee..be084458a 100644
    /** 별도 좌표계·개체 선택을 본문 링크 편집으로 오인하지 않도록 명시적으로 차단한다. */
    canEditHyperlink(): boolean {
      return !this.cursor.isInHeaderFooter() && !this.cursor.isInFootnote()
-@@ -5476,7 +5499,7 @@ export class InputHandler {
+@@ -5476,7 +5498,7 @@ export class InputHandler {
    performRedo(): void { this.handleRedo(); }
  
    /** 복사 (커맨드 시스템용 — 컨텍스트 메뉴/도구 상자에서 호출) */
@@ -8972,7 +8972,7 @@ index 043ee77ee..be084458a 100644
      // 개체 선택 모드 → 직접 클립보드 기록 (textarea 포커스 불필요)
      if (this.cursor.isInPictureObjectSelection()) {
        const ref = this.cursor.getSelectedPictureRef();
-@@ -5495,11 +5518,12 @@ export class InputHandler {
+@@ -5495,11 +5517,12 @@ export class InputHandler {
              _keyboard.writeTextHtmlToClipboard(text, markedHtml)
                .catch(() => navigator.clipboard.writeText(text).catch(() => {}));
            }
@@ -8986,7 +8986,7 @@ index 043ee77ee..be084458a 100644
      }
      if (this.cursor.isInTableObjectSelection()) {
        const ref = this.cursor.getSelectedTableRef();
-@@ -5519,15 +5543,16 @@ export class InputHandler {
+@@ -5519,15 +5542,16 @@ export class InputHandler {
            const markedHtml = _keyboard.prepareRhwpInternalClipboardHtml(this, html, text);
            _keyboard.writeTextHtmlToClipboard(text, markedHtml)
              .catch(() => navigator.clipboard.writeText(text).catch(() => {}));
@@ -9005,7 +9005,7 @@ index 043ee77ee..be084458a 100644
    }
  
    /** 붙이기 (커맨드 시스템용 — 컨텍스트 메뉴/도구 상자에서 호출) */
-@@ -5568,9 +5593,11 @@ export class InputHandler {
+@@ -5568,9 +5592,11 @@ export class InputHandler {
      if (this.cursor.isInTableObjectSelection()) {
        const ref = this.cursor.getSelectedTableRef();
        if (ref) {
@@ -9020,7 +9020,7 @@ index 043ee77ee..be084458a 100644
          this.cursor.moveOutOfSelectedTable();
          this.eventBus.emit('table-object-selection-changed', false);
          this.executeOperation({ kind: 'snapshot', operationType: 'cutTable', operation: (wasm: WasmBridge) => {
-@@ -5604,18 +5631,7 @@ export class InputHandler {
+@@ -5604,18 +5630,7 @@ export class InputHandler {
      if (this.cursor.isInTableObjectSelection()) {
        const ref = this.cursor.getSelectedTableRef();
        if (!ref) return;
@@ -9040,7 +9040,7 @@ index 043ee77ee..be084458a 100644
        return;
      }
      if (this.cursor.hasSelection()) {
-@@ -5623,6 +5639,44 @@ export class InputHandler {
+@@ -5623,6 +5638,44 @@ export class InputHandler {
      }
    }
  
@@ -9085,7 +9085,7 @@ index 043ee77ee..be084458a 100644
    /** 전체 선택 (커맨드 시스템용) */
    performSelectAll(): void { this.handleSelectAll(); }
  
-@@ -5930,6 +5984,9 @@ export class InputHandler {
+@@ -5930,6 +5983,9 @@ export class InputHandler {
      }
      const pos = this.cursor.getPosition();
      if (pos.parentParaIndex !== undefined) {
