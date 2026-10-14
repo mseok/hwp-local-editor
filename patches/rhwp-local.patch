@@ -1,8 +1,12 @@
 diff --git a/rhwp-studio/src/core/wasm-bridge.ts b/rhwp-studio/src/core/wasm-bridge.ts
-index 58162bab6..ce82694dd 100644
+index 58162bab6..ad5351ec1 100644
 --- a/rhwp-studio/src/core/wasm-bridge.ts
 +++ b/rhwp-studio/src/core/wasm-bridge.ts
-@@ -10,6 +10,7 @@ import type { HyperlinkTarget, HyperlinkContext } from './hyperlink';
+@@ -7,9 +7,11 @@ import type { CanvasMetricDocument } from './canvas-metric-session';
+ import { requireCharShapeRunsDocument, parseCharShapeRuns, validateCharShapeRuns } from './char-shape-runs';
+ import type { CharShapeRun } from './types';
+ import type { HyperlinkTarget, HyperlinkContext } from './hyperlink';
++import type { MemoInfo } from './memo';
  import * as wasmExports from '@wasm/rhwp.js';
  import { blake3 } from '@noble/hashes/blake3.js';
  import { bytesToHex } from '@noble/hashes/utils.js';
@@ -10,7 +14,7 @@ index 58162bab6..ce82694dd 100644
  import type { DocumentInfo, PageInfo, PageDef, SectionDef, PageBorderFillSettings, EndnoteShapeSettings, NoteEditInfo, CursorRect, HitTestResult, BodyFootnoteMarkerHit, FootnoteAtCursorResult, DeleteFootnoteResult, LineInfo, TableDimensions, CellInfo, CellBbox, CellProperties, TableProperties, DocumentPosition, MoveVerticalResult, SelectionRect, CharProperties, ParaProperties, CellPathEntry, CellPathLike, NavContextEntry, FieldInfoResult, BookmarkInfo, LayerRenderProfile, PageLayerTree, CanvasKitDocumentPreflight } from './types';
  import { parseCanvasKitDocumentPreflight } from './canvaskit-document-preflight';
  import {
-@@ -301,10 +302,32 @@ function installCanvasFontSubstitution(): void {
+@@ -301,10 +303,32 @@ function installCanvasFontSubstitution(): void {
  
  export class WasmBridge {
    private doc: HwpDocument | null = null;
@@ -43,7 +47,7 @@ index 58162bab6..ce82694dd 100644
    private canvasMetricDocument(): CanvasMetricDocument | null {
      const doc = this.doc as unknown as Partial<CanvasMetricDocument> | null;
      return doc && ['collectCanvasMetricRequests', 'registerCanvasMetricReplies', 'selectCanvasMetrics', 'canvasMetricsActive', 'getCanvasPageLayerTree']
-@@ -438,6 +461,7 @@ export class WasmBridge {
+@@ -438,6 +462,7 @@ export class WasmBridge {
     * 비교 상세 창 등 보조 WasmBridge 인스턴스에서 반복 로드 시 메모리 누수를 줄이기 위해 사용한다.
     */
    releaseDocument(): void {
@@ -51,7 +55,7 @@ index 58162bab6..ce82694dd 100644
      this.releaseCanvasFontResources();
      if (this.doc) {
        try {
-@@ -464,6 +488,7 @@ export class WasmBridge {
+@@ -464,6 +489,7 @@ export class WasmBridge {
  
      try {
        nextDoc = createDocument();
@@ -59,7 +63,7 @@ index 58162bab6..ce82694dd 100644
        nextDoc.convertToEditable();
        this.ensureParagraphStableIdsFor(nextDoc);
        nextDoc.setFileName(nextFileName);
-@@ -471,7 +496,8 @@ export class WasmBridge {
+@@ -471,7 +497,8 @@ export class WasmBridge {
        // 새 문서를 끝까지 준비한 뒤에만 기존 문서를 교체한다. 암호 필요·오답·손상
        // 오류에서는 현재 문서와 최근 문서 연결을 그대로 유지해야 한다 (#3474).
        const previousDoc = this.doc;
@@ -69,7 +73,7 @@ index 58162bab6..ce82694dd 100644
        this._fileName = nextFileName;
        this._currentFileHandle = null;
        // 암호 문자열은 보관하지 않는다. 다음 저장에서 암호 재입력이 필요한지 여부만
-@@ -509,7 +535,9 @@ export class WasmBridge {
+@@ -509,7 +536,9 @@ export class WasmBridge {
    }
  
    loadDocument(data: Uint8Array, fileName?: string): DocumentInfo {
@@ -80,7 +84,7 @@ index 58162bab6..ce82694dd 100644
      return this.getDocumentInfo();
    }
  
-@@ -605,6 +633,18 @@ export class WasmBridge {
+@@ -605,6 +634,18 @@ export class WasmBridge {
      return this._documentGeneration;
    }
  
@@ -99,7 +103,7 @@ index 58162bab6..ce82694dd 100644
    /**
     * 플러그인 차용용 문서 핸들.
     *
-@@ -1344,6 +1384,11 @@ export class WasmBridge {
+@@ -1344,6 +1385,11 @@ export class WasmBridge {
      ));
    }
  
@@ -111,7 +115,7 @@ index 58162bab6..ce82694dd 100644
    hitTest(pageNum: number, x: number, y: number): HitTestResult {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      return JSON.parse(this.doc.hitTest(pageNum, x, y));
-@@ -1823,6 +1868,11 @@ export class WasmBridge {
+@@ -1823,6 +1869,11 @@ export class WasmBridge {
      return JSON.parse(this.doc.getLineInfoInCell(sec, parentPara, controlIdx, cellIdx, cellParaIdx, charOffset));
    }
  
@@ -123,7 +127,7 @@ index 58162bab6..ce82694dd 100644
    /**
     * 문서에 **저장된** 캐럿 스탬프({@link setCaretPosition} 가 남긴 값,
     * `doc_properties.caret_list_id/caret_para_id/caret_char_pos`)를 읽는다.
-@@ -1897,6 +1947,11 @@ export class WasmBridge {
+@@ -1897,6 +1948,11 @@ export class WasmBridge {
      return JSON.parse(this.doc.deleteTableControl(sec, parentPara, controlIdx));
    }
  
@@ -135,7 +139,7 @@ index 58162bab6..ce82694dd 100644
    getCellProperties(sec: number, parentPara: number, controlIdx: number, cellIdx: number): CellProperties {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      return JSON.parse(this.doc.getCellProperties(sec, parentPara, controlIdx, cellIdx));
-@@ -1907,6 +1962,11 @@ export class WasmBridge {
+@@ -1907,6 +1963,11 @@ export class WasmBridge {
      return JSON.parse((this.doc as any).getCellPropertiesByPath(sec, parentPara, pathJson, cellIdx));
    }
  
@@ -147,7 +151,7 @@ index 58162bab6..ce82694dd 100644
    getCellOwnProperties(sec: number, parentPara: number, controlIdx: number, cellIdx: number): CellProperties {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      const doc = this.doc as unknown as {
-@@ -2054,16 +2114,31 @@ export class WasmBridge {
+@@ -2054,16 +2115,31 @@ export class WasmBridge {
      );
    }
  
@@ -180,7 +184,7 @@ index 58162bab6..ce82694dd 100644
    getTableSignature(sec: number, parentPara: number, controlIdx: number): string {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      const d = this.doc as unknown as { getTableSignature?: (a: number, b: number, c: number) => string };
-@@ -2078,6 +2153,26 @@ export class WasmBridge {
+@@ -2078,6 +2154,26 @@ export class WasmBridge {
      return JSON.parse(this.doc.setTableProperties(sec, parentPara, controlIdx, JSON.stringify(props)));
    }
  
@@ -207,7 +211,7 @@ index 58162bab6..ce82694dd 100644
    mergeTableCells(sec: number, parentPara: number, controlIdx: number, startRow: number, startCol: number, endRow: number, endCol: number): { ok: boolean; cellCount: number } {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      return JSON.parse(this.doc.mergeTableCells(sec, parentPara, controlIdx, startRow, startCol, endRow, endCol));
-@@ -2156,6 +2251,26 @@ export class WasmBridge {
+@@ -2156,6 +2252,26 @@ export class WasmBridge {
      return JSON.parse((this.doc as any).transposeTableCellsInPlace(sec, parentPara, controlIdx));
    }
  
@@ -234,7 +238,7 @@ index 58162bab6..ce82694dd 100644
    pasteTableCellsTransposedAsTable(
      sec: number,
      para: number,
-@@ -2170,6 +2285,11 @@ export class WasmBridge {
+@@ -2170,6 +2286,11 @@ export class WasmBridge {
      return Boolean((this.doc as any).hasTableTransposeClipboard?.());
    }
  
@@ -246,7 +250,7 @@ index 58162bab6..ce82694dd 100644
    /** 표를 지정 행에서 두 개로 나눈다 (한컴 [표-표 나누기]). */
    splitTable(sec: number, parentPara: number, controlIdx: number, atRow: number): { ok: boolean; frontRows: number; backParaIdx: number } {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
-@@ -2182,6 +2302,36 @@ export class WasmBridge {
+@@ -2182,6 +2303,36 @@ export class WasmBridge {
      return JSON.parse(this.doc.mergeTableWithNext(sec, parentPara, controlIdx));
    }
  
@@ -283,7 +287,7 @@ index 58162bab6..ce82694dd 100644
    insertTableRow(sec: number, parentPara: number, controlIdx: number, rowIdx: number, below: boolean): { ok: boolean; rowCount: number; colCount: number } {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      return JSON.parse(this.doc.insertTableRow(sec, parentPara, controlIdx, rowIdx, below));
-@@ -3004,6 +3154,21 @@ export class WasmBridge {
+@@ -3004,6 +3155,21 @@ export class WasmBridge {
      return JSON.parse(this.doc.getCellParaPropertiesAt(sec, parentPara, controlIdx, cellIdx, cellParaIdx));
    }
  
@@ -305,7 +309,36 @@ index 58162bab6..ce82694dd 100644
    setNumberingRestart(sec: number, para: number, mode: number, startNum: number): string {
      if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
      return (this.doc as any).setNumberingRestart(sec, para, mode, startNum);
-@@ -3782,9 +3947,9 @@ export class WasmBridge {
+@@ -3617,6 +3783,28 @@ export class WasmBridge {
+     this.doc.removeHyperlinkEx(JSON.stringify({ target, fieldId, restoreFormatting }));
+   }
+ 
++  /** 문서의 모든 한컴 메모(주석). */
++  getMemos(): MemoInfo[] {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse(this.doc.getMemos());
++  }
++
++  /** [start, end) 글자 범위에 메모를 단다. 새 메모 번호를 돌려준다. */
++  insertMemo(target: HyperlinkTarget, start: number, end: number, text: string): number {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return this.doc.insertMemoEx(JSON.stringify({ target, start, end, text }));
++  }
++
++  setMemoText(number: number, text: string): boolean {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return this.doc.setMemoText(number, text);
++  }
++
++  deleteMemo(number: number): void {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    this.doc.deleteMemo(number);
++  }
++
+   /** 커서 위치의 필드 범위 정보를 조회한다. */
+   getFieldInfoAt(pos: DocumentPosition): FieldInfoResult {
+     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
+@@ -3782,9 +3970,9 @@ export class WasmBridge {
     * cellContext 가 실리므로 호출자는 셀 좌표로 커서를 옮길 수 있어야 한다.
     * 기본값은 종전대로 본문만 — 셀 이동을 못 하는 호출자가 무회귀로 남는다.
     */
@@ -317,7 +350,7 @@ index 58162bab6..ce82694dd 100644
    }
  
    searchAllText(query: string, caseSensitive: boolean, includeCells: boolean = false): import('./types').SearchHit[] {
-@@ -3804,7 +3969,7 @@ export class WasmBridge {
+@@ -3804,7 +3992,7 @@ export class WasmBridge {
  
    replaceAll(query: string, newText: string, caseSensitive: boolean): import('./types').ReplaceAllResult {
      if (!this.doc || typeof (this.doc as any).replaceAll !== 'function') return { ok: false };
@@ -7555,10 +7588,18 @@ index 2f0b5ae..0fb0243 100644
          w,
          "hh:breakSetting",
 diff --git a/src/wasm_api.rs b/src/wasm_api.rs
-index 2031085e3..9e7d0a6bc 100644
+index 2031085e3..8b99cdd07 100644
 --- a/src/wasm_api.rs
 +++ b/src/wasm_api.rs
-@@ -189,6 +189,11 @@ fn render_page_to_canvas_filtered_with_profile_impl(
+@@ -44,6 +44,7 @@ use crate::renderer::DEFAULT_DPI;
+ 
+ mod canvas_metrics;
+ mod hyperlink;
++mod memo;
+ /// 어떤 렌더 export가 교체 가능한 경계 뒤에 있는지 선언하는 곳 (#4577, #4642).
+ mod render_patch_boundary;
+ mod template_automation;
+@@ -189,6 +190,11 @@ fn render_page_to_canvas_filtered_with_profile_impl(
      canvas.set_height(scaled_canvas_extent(tree.page_height, scale));
  
      let mut renderer = WebCanvasRenderer::new(canvas)?;
@@ -7570,7 +7611,7 @@ index 2031085e3..9e7d0a6bc 100644
      renderer.show_paragraph_marks = document.show_paragraph_marks;
      renderer.show_control_codes = document.show_control_codes;
      renderer.set_scale(scale);
-@@ -254,6 +259,11 @@ fn render_page_patch_to_canvas_filtered_with_profile_impl(
+@@ -254,6 +260,11 @@ fn render_page_patch_to_canvas_filtered_with_profile_impl(
      }
  
      let mut renderer = WebCanvasRenderer::new(canvas)?;
@@ -7582,7 +7623,7 @@ index 2031085e3..9e7d0a6bc 100644
      renderer.show_paragraph_marks = document.show_paragraph_marks;
      renderer.show_control_codes = document.show_control_codes;
      renderer.set_scale(scale);
-@@ -592,6 +602,20 @@ impl HwpDocument {
+@@ -592,6 +603,20 @@ impl HwpDocument {
              .map_err(|e| e.into())
      }
  
@@ -7603,7 +7644,7 @@ index 2031085e3..9e7d0a6bc 100644
      /// 비밀번호로 보호된 HWP/HWPX 파일을 비밀번호와 함께 로드한다.
      ///
      /// HWP5 EncryptVersion 4, 압축 HWP3와 ODF AES-256-CBC HWPX를 지원한다.
-@@ -636,6 +660,12 @@ impl HwpDocument {
+@@ -636,6 +661,12 @@ impl HwpDocument {
          self.create_blank_document_native().map_err(|e| e.into())
      }
  
@@ -7616,7 +7657,7 @@ index 2031085e3..9e7d0a6bc 100644
      /// Browser/host font selection이 확정한 face bytes를 exact layout slot에 등록한다.
      /// family 이름 재탐색 없이 `(charShapeId, languageIndex)`에 직접 결합한다.
      #[wasm_bindgen(js_name = registerExactFontSource)]
-@@ -826,6 +856,11 @@ impl HwpDocument {
+@@ -826,6 +857,11 @@ impl HwpDocument {
          canvas.set_height(scaled_canvas_extent(tree.page_height, scale));
  
          let mut renderer = WebCanvasRenderer::new(canvas)?;
@@ -7628,7 +7669,7 @@ index 2031085e3..9e7d0a6bc 100644
          renderer.show_paragraph_marks = self.show_paragraph_marks;
          renderer.show_control_codes = self.show_control_codes;
          renderer.set_scale(scale);
-@@ -865,6 +900,11 @@ impl HwpDocument {
+@@ -865,6 +901,11 @@ impl HwpDocument {
          canvas.set_height(scaled_canvas_extent(tree.root.bbox.height, scale));
  
          let mut renderer = WebCanvasRenderer::new(canvas)?;
@@ -7640,7 +7681,7 @@ index 2031085e3..9e7d0a6bc 100644
          renderer.show_paragraph_marks = self.show_paragraph_marks;
          renderer.show_control_codes = self.show_control_codes;
          renderer.set_scale(scale);
-@@ -968,6 +1008,11 @@ impl HwpDocument {
+@@ -968,6 +1009,11 @@ impl HwpDocument {
          canvas.set_height(scaled_canvas_extent(tree.root.bbox.height, scale));
  
          let mut renderer = WebCanvasRenderer::new(canvas)?;
@@ -7652,7 +7693,7 @@ index 2031085e3..9e7d0a6bc 100644
          renderer.show_paragraph_marks = self.show_paragraph_marks;
          renderer.show_control_codes = self.show_control_codes;
          renderer.set_scale(scale);
-@@ -2108,9 +2153,50 @@ impl HwpDocument {
+@@ -2108,9 +2154,50 @@ impl HwpDocument {
          .map_err(|e| e.into())
      }
  
@@ -7703,7 +7744,7 @@ index 2031085e3..9e7d0a6bc 100644
      #[wasm_bindgen(js_name = insertTableRow)]
      pub fn insert_table_row(
          &mut self,
-@@ -2133,6 +2219,28 @@ impl HwpDocument {
+@@ -2133,6 +2220,28 @@ impl HwpDocument {
      /// 표에 열을 삽입한다.
      ///
      /// 반환값: JSON `{"ok":true,"rowCount":<N>,"colCount":<M>}`
@@ -7732,7 +7773,7 @@ index 2031085e3..9e7d0a6bc 100644
      #[wasm_bindgen(js_name = insertTableColumn)]
      pub fn insert_table_column(
          &mut self,
-@@ -2155,6 +2263,26 @@ impl HwpDocument {
+@@ -2155,6 +2264,26 @@ impl HwpDocument {
      /// 표에서 행을 삭제한다.
      ///
      /// 반환값: JSON `{"ok":true,"rowCount":<N>,"colCount":<M>}`
@@ -7759,7 +7800,7 @@ index 2031085e3..9e7d0a6bc 100644
      #[wasm_bindgen(js_name = deleteTableRow)]
      pub fn delete_table_row(
          &mut self,
-@@ -2175,6 +2303,26 @@ impl HwpDocument {
+@@ -2175,6 +2304,26 @@ impl HwpDocument {
      /// 표에서 열을 삭제한다.
      ///
      /// 반환값: JSON `{"ok":true,"rowCount":<N>,"colCount":<M>}`
@@ -7786,7 +7827,7 @@ index 2031085e3..9e7d0a6bc 100644
      #[wasm_bindgen(js_name = deleteTableColumn)]
      pub fn delete_table_column(
          &mut self,
-@@ -2192,6 +2340,89 @@ impl HwpDocument {
+@@ -2192,6 +2341,89 @@ impl HwpDocument {
          .map_err(|e| e.into())
      }
  
@@ -7876,7 +7917,7 @@ index 2031085e3..9e7d0a6bc 100644
      /// 표의 셀을 병합한다.
      ///
      /// 반환값: JSON `{"ok":true,"cellCount":<N>}`
-@@ -2430,6 +2661,41 @@ impl HwpDocument {
+@@ -2430,6 +2662,41 @@ impl HwpDocument {
          .map_err(|e| e.into())
      }
  
@@ -7918,7 +7959,7 @@ index 2031085e3..9e7d0a6bc 100644
      /// 행/열 바꿈 복사 버퍼를 커서 위치에 새 표로 생성해 붙여넣는다.
      ///
      /// 반환값: JSON `{"ok":true,"paraIdx":N,"controlIdx":N,"sourceRows":N,"sourceCols":N,"targetRows":N,"targetCols":N}`
-@@ -2454,6 +2720,11 @@ impl HwpDocument {
+@@ -2454,6 +2721,11 @@ impl HwpDocument {
          self.has_table_transpose_clipboard_native()
      }
  
@@ -7930,7 +7971,7 @@ index 2031085e3..9e7d0a6bc 100644
      /// 캐럿 위치에서 문단을 분할한다 (Enter 키).
      ///
      /// char_offset 이후의 텍스트가 새 문단으로 이동한다.
-@@ -2695,12 +2966,21 @@ impl HwpDocument {
+@@ -2695,12 +2967,21 @@ impl HwpDocument {
  
          // 컨텍스트가 있으면 (컨테이너 내부) 렌더링된 마지막 문단 인덱스를 조회
          let max_para = if !context.is_empty() {
@@ -7956,7 +7997,7 @@ index 2031085e3..9e7d0a6bc 100644
              )
          } else {
              None
-@@ -2941,6 +3221,24 @@ impl HwpDocument {
+@@ -2941,6 +3222,24 @@ impl HwpDocument {
          .map_err(|e| e.into())
      }
  
@@ -7981,7 +8022,7 @@ index 2031085e3..9e7d0a6bc 100644
      /// 페이지 좌표에서 문서 위치를 찾는다.
      ///
      /// 반환: JSON `{"sectionIndex":N,"paragraphIndex":N,"charOffset":N}`
-@@ -3262,6 +3560,23 @@ impl HwpDocument {
+@@ -3262,6 +3561,23 @@ impl HwpDocument {
          .map_err(|e| e.into())
      }
  
@@ -8005,7 +8046,7 @@ index 2031085e3..9e7d0a6bc 100644
      /// 문서에 저장된 캐럿 위치를 반환한다 (문서 로딩 시 캐럿 자동 배치용).
      ///
      /// 반환: JSON `{"sectionIndex":N,"paragraphIndex":N,"charOffset":N}`
-@@ -3382,6 +3697,21 @@ impl HwpDocument {
+@@ -3382,6 +3698,21 @@ impl HwpDocument {
      /// 반환: JSON `{"ok":true,"changes":[{cellIdx,beforeId,afterId}...],
      /// "borderFillLenBefore":N,"docInfoDirtyBefore":bool}` — changes 는 [#5959]
      /// borderFillId 전환 기록(target+이웃)이다.
@@ -8027,7 +8068,7 @@ index 2031085e3..9e7d0a6bc 100644
      #[wasm_bindgen(js_name = setCellProperties)]
      pub fn set_cell_properties(
          &mut self,
-@@ -3530,9 +3860,34 @@ impl HwpDocument {
+@@ -3530,9 +3861,34 @@ impl HwpDocument {
          .map_err(|e| e.into())
      }
  
@@ -8064,7 +8105,7 @@ index 2031085e3..9e7d0a6bc 100644
      #[wasm_bindgen(js_name = getTableProperties)]
      pub fn get_table_properties(
          &self,
-@@ -3551,6 +3906,20 @@ impl HwpDocument {
+@@ -3551,6 +3907,20 @@ impl HwpDocument {
      /// 표 속성을 수정한다.
      ///
      /// 반환: JSON `{"ok":true}`
@@ -8085,7 +8126,7 @@ index 2031085e3..9e7d0a6bc 100644
      #[wasm_bindgen(js_name = setTableProperties)]
      pub fn set_table_properties(
          &mut self,
-@@ -5498,9 +5867,11 @@ impl HwpDocument {
+@@ -5498,9 +5868,11 @@ impl HwpDocument {
          forward: bool,
          case_sensitive: bool,
          include_cells: Option<bool>,
@@ -8098,7 +8139,7 @@ index 2031085e3..9e7d0a6bc 100644
                  query,
                  from_sec as usize,
                  from_para as usize,
-@@ -5509,6 +5880,7 @@ impl HwpDocument {
+@@ -5509,6 +5881,7 @@ impl HwpDocument {
                  case_sensitive,
                  // [#3865] 미지정이면 종전 동작(본문만) — 인자를 6개만 넘기던 기존 호출자 무회귀.
                  include_cells.unwrap_or(false),
@@ -8106,7 +8147,7 @@ index 2031085e3..9e7d0a6bc 100644
              )
              .map_err(|e| e.into())
      }
-@@ -5567,10 +5939,17 @@ impl HwpDocument {
+@@ -5567,10 +5940,17 @@ impl HwpDocument {
          query: &str,
          new_text: &str,
          case_sensitive: bool,
@@ -8127,7 +8168,7 @@ index 2031085e3..9e7d0a6bc 100644
      }
  
      /// 글로벌 쪽 번호에 해당하는 첫 문단 위치 반환
-@@ -6082,8 +6461,12 @@ impl HwpDocument {
+@@ -6082,8 +6462,12 @@ impl HwpDocument {
  
      /// 문서 글 전체 — `GetTextFile("UNICODE")`. 원문 Unicode JSON 문자열이다.
      #[wasm_bindgen(js_name = getTextFileUnicode)]
@@ -8142,7 +8183,7 @@ index 2031085e3..9e7d0a6bc 100644
      }
  
      /// 문서 글을 한글 스캔 차례로 — `InitScan`·`GetText`·`ReleaseScan` 이 쓴다.
-@@ -7238,6 +7621,33 @@ impl HwpDocument {
+@@ -7238,6 +7622,33 @@ impl HwpDocument {
          .map_err(|e| e.into())
      }
  
@@ -12489,10 +12530,20 @@ index 7fd48f994..e855c1d4c 100755
      if (copyHeaderFooterSelection.call(this, e)) this.deleteSelection();
      return;
 diff --git a/rhwp-studio/index.html b/rhwp-studio/index.html
-index 16f230b54..07477f7c3 100644
+index 16f230b54..8986d05e5 100644
 --- a/rhwp-studio/index.html
 +++ b/rhwp-studio/index.html
-@@ -391,6 +391,9 @@
+@@ -153,7 +153,8 @@
+           </div>
+           <div class="md-item disabled" data-cmd="insert:para-band"><span class="md-icon"></span><span class="md-label" data-i18n="command.insert.paraBand.label">문단 띠</span></div>
+           <div class="md-sep"></div>
+-          <div class="md-item disabled" data-cmd="insert:comment"><span class="md-icon icon-comment"></span><span class="md-label" data-i18n="command.insert.comment.label">주석</span></div>
++          <div class="md-item" data-cmd="insert:comment"><span class="md-icon icon-comment"></span><span class="md-label">메모 넣기</span></div>
++          <div class="md-item" data-cmd="view:memos"><span class="md-icon icon-comment"></span><span class="md-label">메모 목록</span></div>
+           <div class="md-item" data-cmd="insert:footnote"><span class="md-icon icon-footnote"></span><span class="md-label" data-i18n="command.insert.footnote.label">각주</span></div>
+           <div class="md-item" data-cmd="insert:endnote"><span class="md-icon icon-endnote"></span><span class="md-label" data-i18n="command.insert.endnote.label">미주</span></div>
+           <div class="md-item" data-cmd="insert:endnote-shape"><span class="md-icon icon-endnote"></span><span class="md-label" data-i18n="command.insert.endnoteShape.label">미주 모양</span></div>
+@@ -391,6 +392,9 @@
            <div class="md-sep"></div>
            <div class="md-item disabled" data-cmd="table:cell-split"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.cellSplit.label">셀 나누기</span><span class="md-shortcut">S</span></div>
            <div class="md-item disabled" data-cmd="table:cell-merge"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.cellMerge.label">셀 합치기</span><span class="md-shortcut">M</span></div>
@@ -12502,7 +12553,15 @@ index 16f230b54..07477f7c3 100644
            <div class="md-item disabled" data-cmd="table:cell-height-equal"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.cellHeightEqual.label">셀 높이를 같게</span><span class="md-shortcut">H</span></div>
            <div class="md-item disabled" data-cmd="table:cell-width-equal"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.cellWidthEqual.label">셀 너비를 같게</span><span class="md-shortcut">W</span></div>
            <div class="md-item disabled" data-cmd="table:transpose-copy"><span class="md-icon"></span><span class="md-label" data-i18n="command.table.transposeCopy.label">행/열 바꿈 복사</span></div>
-@@ -497,12 +500,12 @@
+@@ -473,6 +477,7 @@
+         <button class="tb-btn" data-cmd="page:footer-create" title="꼬리말" data-i18n-title="command.page.footerCreate.tooltip"><span class="tb-sprite icon-footer"></span><span class="tb-label" data-i18n="command.page.footerCreate.toolbarLabel">꼬리말</span></button>
+         <button class="tb-btn" data-cmd="insert:footnote" title="각주" data-i18n-title="command.insert.footnote.tooltip.x195a3d"><span class="tb-sprite icon-footnote"></span><span class="tb-label" data-i18n="command.insert.footnote.toolbarLabel.x195a3d">각주</span></button>
+         <button class="tb-btn" data-cmd="insert:endnote" title="미주" data-i18n-title="command.insert.endnote.tooltip.x25a949"><span class="tb-sprite icon-endnote"></span><span class="tb-label" data-i18n="command.insert.endnote.toolbarLabel.x25a949">미주</span></button>
++        <button class="tb-btn" data-cmd="view:memos" title="메모 목록" aria-label="메모 목록"><span class="tb-sprite icon-comment"></span><span class="tb-label">메모</span></button>
+         <div class="tb-split">
+           <button class="tb-btn tb-split-main" title="찾기 (Ctrl+F)" data-cmd="edit:find" data-i18n-title="command.edit.find.tooltip"><span class="tb-sprite icon-find"></span><span class="tb-label" data-i18n="command.edit.find.toolbarLabel">찾기</span></button>
+           <button class="tb-btn tb-split-arrow" title="찾기 메뉴" aria-haspopup="menu" aria-expanded="false" data-i18n-title="ui.iconToolbarViewport.tooltip.xbaf454"><span class="tb-arrow-icon">▾</span></button>
+@@ -497,12 +502,12 @@
          <button class="tb-btn" data-cmd="page:headerfooter-prev" title="이전" data-i18n-title="command.page.headerfooterPrev.tooltip"><span class="tb-icon-text">◀</span><span class="tb-label" data-i18n="command.page.headerfooterPrev.toolbarLabel">이전</span></button>
          <button class="tb-btn" data-cmd="page:headerfooter-next" title="다음" data-i18n-title="command.page.headerfooterNext.tooltip"><span class="tb-icon-text">▶</span><span class="tb-label" data-i18n="command.page.headerfooterNext.toolbarLabel">다음</span></button>
          <span class="tb-sep"></span>
@@ -12520,7 +12579,7 @@ index 16f230b54..07477f7c3 100644
        <!-- 주석 편집 모드 전용 도구상자 (숨김) -->
        <div class="tb-group tb-mode-group tb-note-group" hidden>
 diff --git a/rhwp-studio/src/core/mutation-method-registry.ts b/rhwp-studio/src/core/mutation-method-registry.ts
-index 2d05c75e1..d2fcb05a1 100755
+index 2d05c75e1..472230600 100755
 --- a/rhwp-studio/src/core/mutation-method-registry.ts
 +++ b/rhwp-studio/src/core/mutation-method-registry.ts
 @@ -31,13 +31,14 @@ export const MUTATING_METHODS: readonly string[] = [
@@ -12548,7 +12607,16 @@ index 2d05c75e1..d2fcb05a1 100755
    // 스타일/번호 정의 (DocInfo 변이 포함)
    'updateStyle', 'updateStyleShapes', 'createStyle', 'deleteStyle', 'applyStyle',
    'applyCellStyle', 'createNumbering', 'ensureDefaultNumbering', 'ensureDefaultBullet',
-@@ -123,6 +125,8 @@ export const EXCLUDED_NON_DOCUMENT: readonly string[] = [
+@@ -75,6 +77,8 @@ export const MUTATING_METHODS: readonly string[] = [
+   'setFieldValue', 'setFieldValueByName', 'removeFieldAt', 'insertClickHereField',
+   'updateClickHereProps', 'setFormValue', 'setFormValueInCell',
+   'replaceText', 'replaceOne', 'replaceAll',
++  // 한컴 메모(주석)
++  'insertMemo', 'setMemoText', 'deleteMemo',
+   'addBookmark', 'deleteBookmark', 'renameBookmark',
+   // lineseg 재계산 (#177 — 저장 lineseg 를 실제로 변경)
+   'reflowLinesegs',
+@@ -123,6 +127,8 @@ export const EXCLUDED_NON_DOCUMENT: readonly string[] = [
    // [#7002] 내부 클립보드 적재 — 문서는 읽기만 하고 복사본을 코어 버퍼에 담는다.
    'copySelection', 'copySelectionInCell', 'copySelectionInCellByPath',
    'copySelectionInHeaderFooter', 'copyControl', 'copyTableCellsTransposed',
@@ -14384,3 +14452,1283 @@ index 9d327c4bd..29881cdf5 100644
                  rotation_center: crate::model::Point {
                      x: (width / 2) as i32,
                      y: (height / 2) as i32,
+diff --git a/src/document_core/hyperlink.rs b/src/document_core/hyperlink.rs
+index 4d5467799..8e8b99e22 100644
+--- a/src/document_core/hyperlink.rs
++++ b/src/document_core/hyperlink.rs
+@@ -371,7 +371,7 @@ impl DocumentCore {
+             .ok_or_else(|| invalid("문단 인덱스 초과"))
+     }
+ 
+-    fn hyperlink_paragraph_list(
++    pub(crate) fn hyperlink_paragraph_list(
+         &self,
+         target: &HyperlinkTarget,
+     ) -> Result<(&[Paragraph], usize), HwpError> {
+@@ -407,7 +407,10 @@ impl DocumentCore {
+         Ok((paragraphs, para_idx))
+     }
+ 
+-    fn validate_hyperlink_paragraph(&self, target: &HyperlinkTarget) -> Result<(), HwpError> {
++    pub(crate) fn validate_hyperlink_paragraph(
++        &self,
++        target: &HyperlinkTarget,
++    ) -> Result<(), HwpError> {
+         let p = self.hyperlink_paragraph(target)?;
+         if p.field_ranges.iter().any(|r| {
+             r.start_char_idx > r.end_char_idx
+@@ -462,6 +465,22 @@ impl DocumentCore {
+         target: &HyperlinkTarget,
+         candidate: Paragraph,
+         field_id: u32,
++    ) -> Result<(), HwpError> {
++        self.commit_field_paragraph(target, candidate)?;
++        self.event_log.push(DocumentEvent::HyperlinkChanged {
++            section: target.section,
++            para: target.para,
++            cell_path: target.cell_path.clone(),
++            field_id,
++        });
++        Ok(())
++    }
++
++    /// 필드 마커를 넣거나 뺀 문단 사본을 반영하고 재조판한다 (링크·메모 공용).
++    pub(crate) fn commit_field_paragraph(
++        &mut self,
++        target: &HyperlinkTarget,
++        candidate: Paragraph,
+     ) -> Result<(), HwpError> {
+         let section = target.section;
+         let para = target.para;
+@@ -499,12 +518,6 @@ impl DocumentCore {
+         self.mark_section_dirty(section);
+         self.paginate_if_needed();
+         self.invalidate_page_tree_cache();
+-        self.event_log.push(DocumentEvent::HyperlinkChanged {
+-            section,
+-            para,
+-            cell_path: target.cell_path.clone(),
+-            field_id,
+-        });
+         Ok(())
+     }
+ }
+@@ -526,7 +539,7 @@ fn find_link(p: &Paragraph, id: u32) -> Result<(usize, usize), HwpError> {
+         .ok_or_else(|| invalid("하이퍼링크 필드를 찾을 수 없습니다"))
+ }
+ 
+-fn raw_boundary(p: &Paragraph, offset: usize) -> u32 {
++pub(crate) fn raw_boundary(p: &Paragraph, offset: usize) -> u32 {
+     p.char_offsets
+         .get(offset)
+         .copied()
+@@ -535,7 +548,7 @@ fn raw_boundary(p: &Paragraph, offset: usize) -> u32 {
+ 
+ /// 8-unit 마커를 넣거나 빼며 모든 raw UTF-16 참조 축을 함께 옮긴다.
+ /// 첫 글자 서식의 0 anchor는 그대로 둔다. 표시 문자 인덱스는 변하지 않는다.
+-fn shift_axis(p: &mut Paragraph, boundary: u32, delta: i32) -> Result<(), HwpError> {
++pub(crate) fn shift_axis(p: &mut Paragraph, boundary: u32, delta: i32) -> Result<(), HwpError> {
+     let shift = |v: &mut u32| -> Result<(), HwpError> {
+         if *v >= boundary {
+             *v = v
+diff --git a/src/document_core/mod.rs b/src/document_core/mod.rs
+index c7f2d2c5f..e3efa8b55 100644
+--- a/src/document_core/mod.rs
++++ b/src/document_core/mod.rs
+@@ -28,6 +28,7 @@ pub(crate) mod html_table_import;
+ /// 한글 클립보드 문서모델(hwpjson) → HWPX 변환
+ pub mod hwpjson;
+ pub mod hyperlink;
++pub mod memo;
+ pub mod queries;
+ pub mod table_calc;
+ pub mod text_security;
+diff --git a/src/document_core/memo.rs b/src/document_core/memo.rs
+new file mode 100644
+index 000000000..3230c03b8
+--- /dev/null
++++ b/src/document_core/memo.rs
+@@ -0,0 +1,365 @@
++//! 한컴 메모(주석) 조회·넣기·고치기·지우기.
++//!
++//! 메모는 본문 범위를 감싸는 MEMO 필드와 그 필드가 소유한 메모 본문 문단이다. HWPX 는
++//! `type="MEMO"` 필드로, HWP5 는 `%unk` + `MEMO/…` command 필드로 읽힌다. 문서 안 메모의
++//! 주소는 메모 번호(`Field::memo_number`)다. 범위 계약은 하이퍼링크 API(#6963)와 같다:
++//! offset 은 Unicode scalar 인덱스, 범위는 [start, end), 개체가 있는 문단·다단락 필드는 제외.
++
++use super::hyperlink::{raw_boundary, shift_axis, HyperlinkTarget};
++use super::DocumentCore;
++use crate::error::HwpError;
++use crate::model::control::{Control, Field, FieldType};
++use crate::model::paragraph::{CharShapeRef, FieldRange, Paragraph};
++use crate::parser::tags;
++
++#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
++#[serde(rename_all = "camelCase")]
++pub struct MemoInfo {
++    pub number: u32,
++    pub field_id: u32,
++    pub author: String,
++    pub target: HyperlinkTarget,
++    /// 메모가 감싼 범위. 여러 문단에 걸친 메모는 시작 문단에 범위가 없다.
++    pub start: Option<usize>,
++    pub end: Option<usize>,
++    pub anchor_text: String,
++    /// 메모 본문. 문단은 줄바꿈으로 잇는다.
++    pub text: String,
++    #[serde(skip)]
++    control_idx: usize,
++}
++
++impl DocumentCore {
++    /// 문서의 모든 메모를 문서 순서로 돌려준다 (본문, 표 셀, 글상자).
++    pub fn memos_native(&self) -> Vec<MemoInfo> {
++        let mut out = Vec::new();
++        for (section, s) in self.document.sections.iter().enumerate() {
++            collect_memos(&s.paragraphs, section, None, &[], &mut out);
++        }
++        out
++    }
++
++    /// 선택한 글자 범위에 메모를 단다. 새 메모 번호를 돌려준다.
++    pub fn insert_memo_native(
++        &mut self,
++        target: &HyperlinkTarget,
++        start: usize,
++        end: usize,
++        text: &str,
++        author: &str,
++    ) -> Result<u32, HwpError> {
++        self.validate_hyperlink_paragraph(target)?;
++        let mut candidate = self.hyperlink_paragraph(target)?.clone();
++        let len = candidate.text.chars().count();
++        if start >= end || end > len {
++            return Err(invalid(
++                "메모는 문단 안의 비어 있지 않은 글자 범위가 필요합니다",
++            ));
++        }
++        // HWP5 필드 끝 마커는 순서로만 짝을 찾는다. 경계를 공유하면 마커 순서가 섞이므로
++        // 맞닿은 필드도 거절한다.
++        if candidate
++            .field_ranges
++            .iter()
++            .any(|r| r.start_char_idx <= end && start <= r.end_char_idx)
++        {
++            return Err(invalid(
++                "다른 필드와 겹치거나 맞닿은 범위에는 메모를 달 수 없습니다",
++            ));
++        }
++        let memo_paragraphs = self.memo_paragraphs_from_text(text, None)?;
++        let number = self
++            .memos_native()
++            .iter()
++            .map(|m| m.number)
++            .max()
++            .unwrap_or(0)
++            .checked_add(1)
++            .ok_or_else(|| invalid("메모 번호 공간이 소진되었습니다"))?;
++        let mut max_id = 0;
++        for s in &self.document.sections {
++            for p in &s.paragraphs {
++                super::queries::field_query::collect_max_field_id(p, &mut max_id);
++            }
++        }
++        let field_id = max_id
++            .checked_add(1)
++            .ok_or_else(|| invalid("필드 ID 공간이 소진되었습니다"))?;
++        let author: String = author
++            .chars()
++            .filter(|c| !c.is_control() && !matches!(c, '/' | '\\' | ';'))
++            .collect();
++
++        let positions = candidate.control_text_positions();
++        let insert_idx = candidate
++            .controls
++            .iter()
++            .enumerate()
++            .position(|(idx, _)| {
++                candidate
++                    .field_ranges
++                    .iter()
++                    .find(|r| r.control_idx == idx)
++                    .map_or(positions[idx], |r| r.start_char_idx)
++                    > start
++            })
++            .unwrap_or(candidate.controls.len());
++        let end_raw = raw_boundary(&candidate, end);
++        let start_raw = raw_boundary(&candidate, start);
++        shift_axis(&mut candidate, end_raw, 8)?;
++        shift_axis(&mut candidate, start_raw, 8)?;
++        for r in &mut candidate.field_ranges {
++            if r.control_idx >= insert_idx {
++                r.control_idx += 1;
++            }
++        }
++        candidate.controls.insert(
++            insert_idx,
++            Control::Field(Field {
++                field_type: FieldType::Memo,
++                ctrl_id: tags::FIELD_MEMO,
++                command: format!("MEMO/65535/{number}/{field_id}/{field_id}/{author}/\\;;"),
++                memo_index: number,
++                field_id,
++                memo_paragraphs,
++                ..Default::default()
++            }),
++        );
++        candidate
++            .ctrl_data_records
++            .resize(candidate.controls.len() - 1, None);
++        candidate.ctrl_data_records.insert(insert_idx, None);
++        candidate.field_ranges.push(FieldRange {
++            start_char_idx: start,
++            end_char_idx: end,
++            control_idx: insert_idx,
++            ..Default::default()
++        });
++        candidate
++            .field_ranges
++            .sort_by_key(|r| (r.start_char_idx, r.control_idx));
++        self.commit_field_paragraph(target, candidate)?;
++        Ok(number)
++    }
++
++    /// 메모 본문을 바꾼다. 같은 내용이면 false.
++    pub fn set_memo_text_native(&mut self, number: u32, text: &str) -> Result<bool, HwpError> {
++        let memo = self.find_memo(number)?;
++        if memo.text == text.replace("\r\n", "\n") {
++            return Ok(false);
++        }
++        let template = {
++            let p = self.hyperlink_paragraph(&memo.target)?;
++            match p.controls.get(memo.control_idx) {
++                Some(Control::Field(f)) => f.memo_paragraphs.first().cloned(),
++                _ => None,
++            }
++        };
++        let paragraphs = self.memo_paragraphs_from_text(text, template.as_ref())?;
++        let target = &memo.target;
++        let para = if target.cell_path.is_empty() {
++            self.document
++                .sections
++                .get_mut(target.section)
++                .and_then(|s| s.paragraphs.get_mut(target.para))
++                .ok_or_else(|| invalid("문단 인덱스 초과"))?
++        } else {
++            self.get_cell_paragraph_mut_by_path(target.section, target.para, &target.cell_path)?
++        };
++        let Some(Control::Field(field)) = para.controls.get_mut(memo.control_idx) else {
++            return Err(invalid("메모 필드를 찾을 수 없습니다"));
++        };
++        field.memo_paragraphs = paragraphs;
++        if let Some(&(ctrl, _, _)) = target.cell_path.first() {
++            self.mark_cell_control_dirty(target.section, target.para, ctrl);
++        }
++        self.document.sections[target.section].raw_stream = None;
++        self.mark_section_dirty(target.section);
++        Ok(true)
++    }
++
++    /// 메모를 지운다. 메모가 감쌌던 글자와 서식은 남긴다.
++    pub fn delete_memo_native(&mut self, number: u32) -> Result<(), HwpError> {
++        let memo = self.find_memo(number)?;
++        let (Some(start), Some(end)) = (memo.start, memo.end) else {
++            return Err(invalid("여러 문단에 걸친 메모는 아직 지울 수 없습니다"));
++        };
++        self.validate_hyperlink_paragraph(&memo.target)?;
++        let mut candidate = self.hyperlink_paragraph(&memo.target)?.clone();
++        let range_idx = candidate
++            .field_ranges
++            .iter()
++            .position(|r| r.control_idx == memo.control_idx)
++            .ok_or_else(|| invalid("메모 범위를 찾을 수 없습니다"))?;
++        if start == end
++            || candidate.field_ranges.iter().enumerate().any(|(idx, r)| {
++                idx != range_idx && r.start_char_idx <= end && start <= r.end_char_idx
++            })
++        {
++            return Err(invalid(
++                "빈 범위이거나 다른 필드와 맞닿은 메모는 아직 지울 수 없습니다",
++            ));
++        }
++        let end_raw = raw_boundary(&candidate, end);
++        let start_raw = raw_boundary(&candidate, start);
++        if start_raw < 8 || end_raw.saturating_sub(start_raw) < 8 {
++            return Err(invalid("필드 마커 좌표가 올바르지 않습니다"));
++        }
++        shift_axis(&mut candidate, end_raw, -8)?;
++        shift_axis(&mut candidate, start_raw, -8)?;
++        candidate.field_ranges.remove(range_idx);
++        candidate.controls.remove(memo.control_idx);
++        if memo.control_idx < candidate.ctrl_data_records.len() {
++            candidate.ctrl_data_records.remove(memo.control_idx);
++        }
++        for range in &mut candidate.field_ranges {
++            if range.control_idx > memo.control_idx {
++                range.control_idx -= 1;
++            }
++        }
++        self.commit_field_paragraph(&memo.target, candidate)
++    }
++
++    fn find_memo(&self, number: u32) -> Result<MemoInfo, HwpError> {
++        if number == 0 {
++            return Err(invalid("메모 번호가 없습니다"));
++        }
++        self.memos_native()
++            .into_iter()
++            .find(|m| m.number == number)
++            .ok_or_else(|| invalid("메모를 찾을 수 없습니다"))
++    }
++
++    /// 줄마다 메모 본문 문단 하나. 기존 메모가 있으면 그 첫 문단의 모양을,
++    /// 없으면 문서의 `메모` 스타일을 쓴다.
++    fn memo_paragraphs_from_text(
++        &self,
++        text: &str,
++        template: Option<&Paragraph>,
++    ) -> Result<Vec<Paragraph>, HwpError> {
++        let text = text.replace("\r\n", "\n").replace(['\r', '\t'], " ");
++        if text.chars().any(|c| c.is_control() && c != '\n') {
++            return Err(invalid("메모 내용에 제어 문자를 넣을 수 없습니다"));
++        }
++        let (para_shape_id, style_id, char_shape_id) = match template {
++            Some(t) => (
++                t.para_shape_id,
++                t.style_id,
++                t.char_shapes.first().map_or(0, |c| c.char_shape_id),
++            ),
++            None => self
++                .document
++                .doc_info
++                .styles
++                .iter()
++                .enumerate()
++                .find(|(_, s)| s.local_name == "메모")
++                .and_then(|(idx, s)| {
++                    Some((
++                        s.para_shape_id,
++                        u8::try_from(idx).ok()?,
++                        s.char_shape_id as u32,
++                    ))
++                })
++                .unwrap_or((0, 0, 0)),
++        };
++        Ok(text
++            .split('\n')
++            .map(|line| {
++                let mut char_offsets = Vec::with_capacity(line.len());
++                let mut units = 0u32;
++                for c in line.chars() {
++                    char_offsets.push(units);
++                    units += c.len_utf16() as u32;
++                }
++                Paragraph {
++                    text: line.to_string(),
++                    char_offsets,
++                    char_count: units + 1,
++                    char_shapes: vec![CharShapeRef {
++                        start_pos: 0,
++                        char_shape_id,
++                    }],
++                    para_shape_id,
++                    style_id,
++                    ..Paragraph::new_empty()
++                }
++            })
++            .collect())
++    }
++}
++
++fn collect_memos(
++    paragraphs: &[Paragraph],
++    section: usize,
++    body_para: Option<usize>,
++    parent_path: &[(usize, usize, usize)],
++    out: &mut Vec<MemoInfo>,
++) {
++    for (idx, p) in paragraphs.iter().enumerate() {
++        let target = match body_para {
++            None => HyperlinkTarget::body(section, idx),
++            Some(body) => {
++                let mut cell_path = parent_path.to_vec();
++                if let Some(last) = cell_path.last_mut() {
++                    last.2 = idx;
++                }
++                HyperlinkTarget {
++                    section,
++                    para: body,
++                    cell_path,
++                }
++            }
++        };
++        for (control_idx, ctrl) in p.controls.iter().enumerate() {
++            match ctrl {
++                Control::Field(f) if f.is_hancom_memo() => {
++                    let range = p.field_ranges.iter().find(|r| r.control_idx == control_idx);
++                    out.push(MemoInfo {
++                        number: f.memo_number(),
++                        field_id: f.field_id,
++                        author: f.memo_author().to_string(),
++                        target: target.clone(),
++                        start: range.map(|r| r.start_char_idx),
++                        end: range.map(|r| r.end_char_idx),
++                        anchor_text: range
++                            .map(|r| {
++                                p.text
++                                    .chars()
++                                    .skip(r.start_char_idx)
++                                    .take(r.end_char_idx.saturating_sub(r.start_char_idx))
++                                    .collect()
++                            })
++                            .unwrap_or_default(),
++                        text: f
++                            .memo_paragraphs
++                            .iter()
++                            .map(|m| m.text.as_str())
++                            .collect::<Vec<_>>()
++                            .join("\n"),
++                        control_idx,
++                    });
++                }
++                Control::Table(table) => {
++                    for (cell_idx, cell) in table.cells.iter().enumerate() {
++                        let mut path = target.cell_path.clone();
++                        path.push((control_idx, cell_idx, 0));
++                        collect_memos(&cell.paragraphs, section, Some(target.para), &path, out);
++                    }
++                }
++                Control::Shape(shape) => {
++                    if let Some(text_box) = super::get_textbox_from_shape(shape) {
++                        let mut path = target.cell_path.clone();
++                        path.push((control_idx, 0, 0));
++                        collect_memos(&text_box.paragraphs, section, Some(target.para), &path, out);
++                    }
++                }
++                _ => {}
++            }
++        }
++    }
++}
++
++fn invalid(message: &str) -> HwpError {
++    HwpError::InvalidField(message.into())
++}
+diff --git a/src/model/control.rs b/src/model/control.rs
+index 67000c054..790551f4b 100644
+--- a/src/model/control.rs
++++ b/src/model/control.rs
+@@ -978,6 +978,28 @@ impl Field {
+         self.extract_wstring_value("HelpState:")
+     }
+ 
++    /// 한컴 메모(주석) 필드인지. HWPX는 `type="MEMO"`, HWP5는 `%unk` + `MEMO/…` command로 온다.
++    pub fn is_hancom_memo(&self) -> bool {
++        self.field_type == FieldType::Memo || self.command.starts_with("MEMO/")
++    }
++
++    /// 메모 번호. CTRL_HEADER의 memo index가 없으면 command의 `MEMO/<shape>/<Number>/…`에서 읽는다.
++    pub fn memo_number(&self) -> u32 {
++        if self.memo_index != 0 {
++            return self.memo_index;
++        }
++        self.command
++            .split('/')
++            .nth(2)
++            .and_then(|n| n.parse().ok())
++            .unwrap_or(0)
++    }
++
++    /// command의 작성자 토큰 (`MEMO/<shape>/<Number>/<id>/<id>/<Author>/…`).
++    pub fn memo_author(&self) -> &str {
++        self.command.split('/').nth(5).unwrap_or("")
++    }
++
+     /// 양식 모드에서 편집 가능 여부 (properties bit 0)
+     pub fn is_editable_in_form(&self) -> bool {
+         self.properties & 1 != 0
+diff --git a/src/parser/body_text.rs b/src/parser/body_text.rs
+index 036e8bf54..3b4ad4e1c 100644
+--- a/src/parser/body_text.rs
++++ b/src/parser/body_text.rs
+@@ -76,8 +76,29 @@ impl std::error::Error for BodyTextError {}
+ ///
+ /// data: 압축 해제된(배포용은 복호화+해제된) 레코드 바이트 스트림
+ pub fn parse_body_text_section(data: &[u8]) -> Result<Section, BodyTextError> {
++    let (mut section, mut memo_lists) = parse_body_text_section_with_memos(data)?;
++    attach_memo_lists(std::slice::from_mut(&mut section), &mut memo_lists);
++    Ok(section)
++}
++
++/// 구역 끝 메모 리스트(HWPTAG_MEMO_LIST) 하나: 메모 번호와 본문 문단.
++#[derive(Debug, Clone)]
++pub struct MemoList {
++    pub memo_index: u32,
++    pub paragraphs: Vec<Paragraph>,
++    pub section_idx: usize,
++}
++
++/// [`parse_body_text_section`] 과 같지만 구역 끝 메모 리스트를 필드에 붙이지 않고 돌려준다.
++///
++/// 한컴은 모든 메모 본문을 마지막 구역 끝에 저장하므로, 문서 단위 호출자는 모든 구역을
++/// 읽은 뒤 [`attach_memo_lists`] 로 붙인다.
++pub fn parse_body_text_section_with_memos(
++    data: &[u8],
++) -> Result<(Section, Vec<MemoList>), BodyTextError> {
+     let records = Record::read_all(data).map_err(|e| BodyTextError::RecordError(e.to_string()))?;
+     drawing_text_structure::validate(&records)?;
++    let (records, memo_lists) = split_memo_tail(records);
+ 
+     let mut section = Section::default();
+     let mut idx = 0;
+@@ -116,7 +137,7 @@ pub fn parse_body_text_section(data: &[u8]) -> Result<Section, BodyTextError> {
+     // level=1로 태그되어 마지막 문단의 자식으로 오인됨.
+     // 전체 레코드를 재스캔하여 마지막 PARA_HEADER(level=0) 이후의 LIST_HEADER(level=1)를 추출.
+     {
+-        let all_records = Record::read_all(data).unwrap_or_default();
++        let all_records = &records;
+         let last_para0_idx = all_records
+             .iter()
+             .rposition(|r| r.tag_id == tags::HWPTAG_PARA_HEADER && r.level == 0);
+@@ -146,7 +167,145 @@ pub fn parse_body_text_section(data: &[u8]) -> Result<Section, BodyTextError> {
+         }
+     }
+ 
+-    Ok(section)
++    Ok((section, memo_lists))
++}
++
++/// 구역 끝 메모 리스트를 본문 레코드에서 떼어 낸다.
++///
++/// 한컴 저장본은 마지막 본문 문단 뒤에 빈 root 문단(level 0)을 두고 그 아래에
++/// `MEMO_LIST(메모 번호) → LIST_HEADER → 메모 본문 문단(level 1)` 묶음을 반복한다
++/// (`serializer::body_text::serialize_memo_tail` 과 같은 계약). 떼어 내지 않으면 root
++/// 문단이 본문의 빈 문단으로 남고, 뒤의 LIST_HEADER 가 확장 바탕쪽으로 오인된다.
++/// root 문단에 글자나 컨트롤이 있으면 본문 문단으로 남기고 메모 묶음만 뗀다.
++fn split_memo_tail(records: Vec<Record>) -> (Vec<Record>, Vec<MemoList>) {
++    let Some(last_para0) = records
++        .iter()
++        .rposition(|r| r.tag_id == tags::HWPTAG_PARA_HEADER && r.level == 0)
++    else {
++        return (records, Vec::new());
++    };
++    let Some(memo_start) = records[last_para0 + 1..]
++        .iter()
++        .position(|r| r.level == 1 && r.tag_id == tags::HWPTAG_MEMO_LIST)
++        .map(|offset| last_para0 + 1 + offset)
++    else {
++        return (records, Vec::new());
++    };
++
++    let mut memo_lists = Vec::new();
++    let mut idx = memo_start;
++    while idx < records.len()
++        && records[idx].level == 1
++        && records[idx].tag_id == tags::HWPTAG_MEMO_LIST
++    {
++        let memo_index = records[idx]
++            .data
++            .get(..4)
++            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
++            .unwrap_or(0);
++        idx += 1;
++        if idx < records.len()
++            && records[idx].level == 1
++            && records[idx].tag_id == tags::HWPTAG_LIST_HEADER
++        {
++            idx += 1;
++        }
++        let body_start = idx;
++        while idx < records.len()
++            && (records[idx].level >= 2
++                || (records[idx].level == 1 && records[idx].tag_id == tags::HWPTAG_PARA_HEADER))
++        {
++            idx += 1;
++        }
++        memo_lists.push(MemoList {
++            memo_index,
++            paragraphs: parse_paragraph_list(&records[body_start..idx]),
++            section_idx: 0,
++        });
++    }
++    let memo_end = idx;
++
++    let root_is_empty = {
++        let root_children = &records[last_para0 + 1..memo_start];
++        !root_children.iter().any(|r| {
++            r.level == 1
++                && (r.tag_id == tags::HWPTAG_PARA_TEXT || r.tag_id == tags::HWPTAG_CTRL_HEADER)
++        })
++    };
++    let keep_until = if root_is_empty {
++        last_para0
++    } else {
++        memo_start
++    };
++    let mut records = records;
++    let tail = records.split_off(memo_end);
++    records.truncate(keep_until);
++    records.extend(tail);
++    (records, memo_lists)
++}
++
++/// 메모 본문을 같은 번호의 메모 필드에 붙인다. 붙인 리스트는 `memo_lists` 에서 빠진다.
++///
++/// 다른 구역의 필드에 붙으면 두 구역의 원본 스트림 재사용을 끈다. 저장기는 메모 본문을
++/// 필드가 있는 구역 끝에 쓰므로, 원본 꼬리를 재사용하면 같은 메모가 두 번 저장된다.
++pub fn attach_memo_lists(sections: &mut [Section], memo_lists: &mut Vec<MemoList>) {
++    if memo_lists.is_empty() {
++        return;
++    }
++    let single = sections.len() == 1;
++    let mut invalidate = Vec::new();
++    for (section_idx, section) in sections.iter_mut().enumerate() {
++        let mut attached_from = Vec::new();
++        for_each_memo_field_mut(&mut section.paragraphs, &mut |field| {
++            if !field.memo_paragraphs.is_empty() {
++                return;
++            }
++            let number = field.memo_number();
++            if let Some(pos) = memo_lists.iter().position(|m| m.memo_index == number) {
++                let list = memo_lists.remove(pos);
++                attached_from.push(list.section_idx);
++                field.memo_paragraphs = list.paragraphs;
++            }
++        });
++        for from in attached_from {
++            if !single && from != section_idx {
++                invalidate.push(from);
++                invalidate.push(section_idx);
++            }
++        }
++    }
++    for idx in invalidate {
++        if let Some(section) = sections.get_mut(idx) {
++            section.raw_stream = None;
++        }
++    }
++}
++
++fn for_each_memo_field_mut(
++    paragraphs: &mut [Paragraph],
++    f: &mut dyn FnMut(&mut crate::model::control::Field),
++) {
++    for para in paragraphs {
++        for ctrl in &mut para.controls {
++            match ctrl {
++                Control::Field(field) if field.is_hancom_memo() => f(field),
++                Control::Table(table) => {
++                    for cell in &mut table.cells {
++                        for_each_memo_field_mut(&mut cell.paragraphs, f);
++                    }
++                }
++                Control::Shape(shape) => {
++                    if let Some(text_box) = shape
++                        .drawing_mut()
++                        .and_then(|drawing| drawing.text_box.as_mut())
++                    {
++                        for_each_memo_field_mut(&mut text_box.paragraphs, f);
++                    }
++                }
++                _ => {}
++            }
++        }
++    }
+ }
+ 
+ /// 다단락 필드의 종료 마커에 짝 `fieldBegin` 의 id 를 채운다.
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index e4467db3e..f528582d2 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -823,6 +823,7 @@ fn parse_sections_strict(
+     decompression_budget: &mut Hwp5DocumentOpenDecompressionBudget,
+ ) -> Result<Vec<crate::model::document::Section>, ParseError> {
+     let mut sections = Vec::new();
++    let mut pending_memo_lists = Vec::new();
+ 
+     for i in 0..section_count {
+         let section_output_limit = decompression_budget.stream_limit();
+@@ -871,10 +872,15 @@ fn parse_sections_strict(
+             .consume(section_data.len())
+             .map_err(ParseError::CfbError)?;
+ 
+-        match body_text::parse_body_text_section(&section_data) {
+-            Ok(mut section) => {
++        match body_text::parse_body_text_section_with_memos(&section_data) {
++            Ok((mut section, memo_lists)) => {
+                 // 원본 BodyText 스트림 보존 (라운드트립용)
+                 section.raw_stream = Some(section_data);
++                let section_idx = sections.len();
++                pending_memo_lists.extend(memo_lists.into_iter().map(|mut m| {
++                    m.section_idx = section_idx;
++                    m
++                }));
+                 sections.push(section);
+             }
+             Err(e @ body_text::BodyTextError::DrawingTextStructure(_)) => {
+@@ -891,6 +897,8 @@ fn parse_sections_strict(
+     // [#6868 잔여] 구역 경계를 넘는 누름틀의 종료 마커를 잇는다 — 구역 하나를 파싱하는
+     // 동안에는 앞 구역에서 열린 필드를 볼 수 없다.
+     body_text::link_orphan_field_ends_across_sections(&mut sections);
++    // 한컴은 메모 본문을 마지막 구역 끝에 모아 저장한다 — 모든 구역을 읽은 뒤 붙인다.
++    body_text::attach_memo_lists(&mut sections, &mut pending_memo_lists);
+ 
+     Ok(sections)
+ }
+@@ -946,6 +954,7 @@ fn parse_hwp_with_lenient(
+     // BodyText 섹션별 파싱
+     let section_count = lenient.section_count();
+     let mut sections = Vec::new();
++    let mut pending_memo_lists = Vec::new();
+ 
+     for i in 0..section_count {
+         let section_output_limit = decompression_budget.stream_limit();
+@@ -990,9 +999,14 @@ fn parse_hwp_with_lenient(
+             .consume(section_data.len())
+             .map_err(ParseError::CfbError)?;
+ 
+-        match body_text::parse_body_text_section(&section_data) {
+-            Ok(mut section) => {
++        match body_text::parse_body_text_section_with_memos(&section_data) {
++            Ok((mut section, memo_lists)) => {
+                 section.raw_stream = Some(section_data);
++                let section_idx = sections.len();
++                pending_memo_lists.extend(memo_lists.into_iter().map(|mut m| {
++                    m.section_idx = section_idx;
++                    m
++                }));
+                 sections.push(section);
+             }
+             Err(e @ body_text::BodyTextError::DrawingTextStructure(_)) => {
+@@ -1007,6 +1021,8 @@ fn parse_hwp_with_lenient(
+ 
+     // [#6868 잔여] 구역 경계를 넘는 누름틀의 종료 마커 — strict 경로와 같다.
+     body_text::link_orphan_field_ends_across_sections(&mut sections);
++    // 한컴은 메모 본문을 마지막 구역 끝에 모아 저장한다 — 모든 구역을 읽은 뒤 붙인다.
++    body_text::attach_memo_lists(&mut sections, &mut pending_memo_lists);
+ 
+     // BinData 로드 시도
+     let bin_data_content = load_bin_data_content_lenient(
+diff --git a/src/serializer/body_text.rs b/src/serializer/body_text.rs
+index 0e94a0864..e1b57350a 100644
+--- a/src/serializer/body_text.rs
++++ b/src/serializer/body_text.rs
+@@ -169,18 +169,34 @@ fn serialize_master_page_tail(section: &Section, records: &mut Vec<Record>) {
+ 
+ fn collect_memo_lists(section: &Section) -> Vec<(u32, Vec<Paragraph>)> {
+     let mut memo_lists = Vec::new();
+-    for para in &section.paragraphs {
++    collect_memo_lists_in(&section.paragraphs, &mut memo_lists);
++    memo_lists
++}
++
++/// 표 셀과 글상자 안의 메모도 모은다. HWP5 출처 메모(`%unk` + `MEMO/…`)도 메모다.
++fn collect_memo_lists_in(paragraphs: &[Paragraph], memo_lists: &mut Vec<(u32, Vec<Paragraph>)>) {
++    for para in paragraphs {
+         for ctrl in &para.controls {
+-            if let Control::Field(field) = ctrl {
+-                if field.field_type == crate::model::control::FieldType::Memo
+-                    && !field.memo_paragraphs.is_empty()
++            match ctrl {
++                Control::Field(field)
++                    if field.is_hancom_memo() && !field.memo_paragraphs.is_empty() =>
+                 {
+-                    memo_lists.push((field.memo_index, field.memo_paragraphs.clone()));
++                    memo_lists.push((field.memo_number(), field.memo_paragraphs.clone()));
++                }
++                Control::Table(table) => {
++                    for cell in &table.cells {
++                        collect_memo_lists_in(&cell.paragraphs, memo_lists);
++                    }
++                }
++                Control::Shape(shape) => {
++                    if let Some(text_box) = shape.drawing().and_then(|d| d.text_box.as_ref()) {
++                        collect_memo_lists_in(&text_box.paragraphs, memo_lists);
++                    }
+                 }
++                _ => {}
+             }
+         }
+     }
+-    memo_lists
+ }
+ 
+ fn serialize_memo_tail(
+diff --git a/src/serializer/hwpx/field.rs b/src/serializer/hwpx/field.rs
+index f3fd6cf21..48dc48015 100644
+--- a/src/serializer/hwpx/field.rs
++++ b/src/serializer/hwpx/field.rs
+@@ -147,7 +147,27 @@ pub fn write_field_end_full<W: Write>(
+ ///
+ /// command 가 MEMO 형식이 아니면 `None` — 호출부는 기존 경로를 탄다.
+ pub fn memo_field_children_xml(field: &Field) -> Option<String> {
+-    if field.field_type != FieldType::Unknown
++    Some(memo_field_parameters_xml(field)? + EMPTY_MEMO_SUB_LIST_XML)
++}
++
++/// 본문이 없는 메모의 subList — 한글은 subList 가 없는 메모 필드를 열지 못한다.
++pub const EMPTY_MEMO_SUB_LIST_XML: &str = concat!(
++    r#"<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="TOP" "#,
++    r#"linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" "#,
++    r#"hasTextRef="0" hasNumRef="0">"#,
++    r#"<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">"#,
++    r#"<hp:run charPrIDRef="0"/>"#,
++    r#"<hp:linesegarray><hp:lineseg textpos="0" vertpos="0" vertsize="1000" "#,
++    r#"textheight="1000" baseline="850" spacing="600" horzpos="0" horzsize="42524" "#,
++    r#"flags="393216"/></hp:linesegarray>"#,
++    r#"</hp:p></hp:subList>"#,
++);
++
++/// 메모 필드의 `<hp:parameters>` — HWP5 출처 메모와 편집기에서 만든 메모가 쓴다.
++///
++/// 원문 파라미터가 있는 HWPX 출처 메모는 `None` 이고 기존 경로가 원문을 보존한다.
++pub fn memo_field_parameters_xml(field: &Field) -> Option<String> {
++    if !matches!(field.field_type, FieldType::Unknown | FieldType::Memo)
+         || field.raw_type.is_some()
+         || field.raw_parameters_xml.is_some()
+         || !field.parameters.is_empty()
+@@ -169,15 +189,6 @@ pub fn memo_field_children_xml(field: &Field) -> Option<String> {
+             r#"<hp:stringParam name="Author">{author}</hp:stringParam>"#,
+             r#"<hp:stringParam name="MemoShapeIDRef">{shape}</hp:stringParam>"#,
+             r#"</hp:parameters>"#,
+-            r#"<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="TOP" "#,
+-            r#"linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" "#,
+-            r#"hasTextRef="0" hasNumRef="0">"#,
+-            r#"<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">"#,
+-            r#"<hp:run charPrIDRef="0"/>"#,
+-            r#"<hp:linesegarray><hp:lineseg textpos="0" vertpos="0" vertsize="1000" "#,
+-            r#"textheight="1000" baseline="850" spacing="600" horzpos="0" horzsize="42524" "#,
+-            r#"flags="393216"/></hp:linesegarray>"#,
+-            r#"</hp:p></hp:subList>"#,
+         ),
+         command = xml_escape_attr(&field.command),
+         number = xml_escape_attr(number),
+diff --git a/src/serializer/hwpx/section.rs b/src/serializer/hwpx/section.rs
+index 8829aec04..7f7d96857 100644
+--- a/src/serializer/hwpx/section.rs
++++ b/src/serializer/hwpx/section.rs
+@@ -58,6 +58,25 @@ fn render_sub_list_open(text_direction: Option<&str>) -> String {
+         text_direction.unwrap_or("HORIZONTAL"),
+     )
+ }
++/// 메모 본문 subList (#1391 형상).
++fn render_memo_sub_list(f: &Field, ctx: &mut SerializeContext) -> String {
++    let mut out = render_sub_list_open(f.memo_text_direction.as_deref());
++    let mut vert_cursor: u32 = 0;
++    for para in &f.memo_paragraphs {
++        ctx.para_shape_ids.reference(para.para_shape_id);
++        let sid = ctx.effective_style_id(para.style_id);
++        ctx.style_ids.reference(sid as u16);
++        let (runs, linesegs, advance) = render_paragraph_parts(para, vert_cursor, ctx);
++        vert_cursor = advance;
++        let pid = ctx.next_para_id();
++        out.push_str(&render_hp_p_open(para, pid, sid));
++        out.push_str(&runs);
++        out.push_str(&linesegs);
++        out.push_str("</hp:p>");
++    }
++    out.push_str("</hp:subList>");
++    out
++}
+ const LINESEG_SLOT_OPEN: &str = "<hp:linesegarray>";
+ const LINESEG_SLOT_CLOSE: &str = "</hp:linesegarray>";
+ const PARA_CLOSE: &str = "</hp:p></hs:sec>";
+@@ -2442,10 +2461,15 @@ fn render_control_slot(out: &mut String, control: &Control, ctx: &mut SerializeC
+             // [#5866] HWP5 출처 메모(command `MEMO/…`)는 한글 실측 형상(파라미터
+             // 6종 + 빈 subList)으로 방출한다 — CROSSREF 로 굳히면 필드 범위
+             // 숨김이 풀려 메모 대상 텍스트가 본문에 붙는다.
+-            if let Some(memo_children) = super::field::memo_field_children_xml(f) {
++            if let Some(memo_params) = super::field::memo_field_parameters_xml(f) {
+                 out.push_str(&super::field::field_begin_open_tag(f));
+                 out.push('>');
+-                out.push_str(&memo_children);
++                out.push_str(&memo_params);
++                if f.memo_paragraphs.is_empty() {
++                    out.push_str(super::field::EMPTY_MEMO_SUB_LIST_XML);
++                } else {
++                    out.push_str(&render_memo_sub_list(f, ctx));
++                }
+                 out.push_str("</hp:fieldBegin>");
+                 out.push_str("</hp:ctrl>");
+                 return;
+@@ -2466,22 +2490,7 @@ fn render_control_slot(out: &mut String, control: &Control, ctx: &mut SerializeC
+                     out.push_str(params);
+                 }
+                 if has_memo {
+-                    out.push_str(&render_sub_list_open(f.memo_text_direction.as_deref()));
+-                    let mut vert_cursor: u32 = 0;
+-                    for para in &f.memo_paragraphs {
+-                        ctx.para_shape_ids.reference(para.para_shape_id);
+-                        let sid = ctx.effective_style_id(para.style_id);
+-                        ctx.style_ids.reference(sid as u16);
+-                        let (runs, linesegs, advance) =
+-                            render_paragraph_parts(para, vert_cursor, ctx);
+-                        vert_cursor = advance;
+-                        let pid = ctx.next_para_id();
+-                        out.push_str(&render_hp_p_open(para, pid, sid));
+-                        out.push_str(&runs);
+-                        out.push_str(&linesegs);
+-                        out.push_str("</hp:p>");
+-                    }
+-                    out.push_str("</hp:subList>");
++                    out.push_str(&render_memo_sub_list(f, ctx));
+                 }
+                 out.push_str("</hp:fieldBegin>");
+             } else {
+diff --git a/src/wasm_api/memo.rs b/src/wasm_api/memo.rs
+new file mode 100644
+index 000000000..26f244147
+--- /dev/null
++++ b/src/wasm_api/memo.rs
+@@ -0,0 +1,52 @@
++//! Studio 메모(주석) API의 JSON options 어댑터.
++use super::HwpDocument;
++use crate::document_core::hyperlink::HyperlinkTarget;
++use serde::Deserialize;
++use wasm_bindgen::prelude::*;
++
++#[derive(Deserialize)]
++#[serde(rename_all = "camelCase", deny_unknown_fields)]
++struct InsertOptions {
++    target: HyperlinkTarget,
++    start: usize,
++    end: usize,
++    text: String,
++    #[serde(default)]
++    author: String,
++}
++
++#[wasm_bindgen]
++impl HwpDocument {
++    /// 문서의 모든 메모. `[{number, fieldId, author, target, start, end, anchorText, text}]`
++    #[wasm_bindgen(js_name = getMemos)]
++    pub fn get_memos(&self) -> String {
++        serde_json::to_string(&self.core.memos_native()).unwrap_or_else(|_| "[]".into())
++    }
++
++    /// 범위에 메모를 단다. options: `{target, start, end, text, author?}`. 새 메모 번호를 돌려준다.
++    #[wasm_bindgen(js_name = insertMemoEx)]
++    pub fn insert_memo_ex(&mut self, options_json: &str) -> Result<u32, JsValue> {
++        let o: InsertOptions =
++            serde_json::from_str(options_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
++        self.core
++            .insert_memo_native(&o.target, o.start, o.end, &o.text, &o.author)
++            .map_err(Into::into)
++    }
++
++    /// 메모 본문을 바꾼다. 줄바꿈은 문단을 나눈다. 바뀌지 않으면 false.
++    #[wasm_bindgen(js_name = setMemoText)]
++    pub fn set_memo_text(&mut self, number: u32, text: &str) -> Result<bool, JsValue> {
++        self.core
++            .set_memo_text_native(number, text)
++            .map_err(Into::into)
++    }
++
++    /// 메모를 지운다. 감쌌던 글자는 남는다.
++    #[wasm_bindgen(js_name = deleteMemo)]
++    pub fn delete_memo(&mut self, number: u32) -> Result<bool, JsValue> {
++        self.core
++            .delete_memo_native(number)
++            .map_err(JsValue::from)?;
++        Ok(true)
++    }
++}
+diff --git a/rhwp-studio/src/core/memo.ts b/rhwp-studio/src/core/memo.ts
+new file mode 100644
+index 000000000..54cacdbcd
+--- /dev/null
++++ b/rhwp-studio/src/core/memo.ts
+@@ -0,0 +1,14 @@
++import type { HyperlinkTarget } from './hyperlink';
++
++/** 엔진 `getMemos` 항목. 메모 번호가 문서 안 메모의 주소다. */
++export interface MemoInfo {
++  number: number;
++  fieldId: number;
++  author: string;
++  target: HyperlinkTarget;
++  /** 여러 문단에 걸친 메모는 범위가 없다. */
++  start: number | null;
++  end: number | null;
++  anchorText: string;
++  text: string;
++}
+diff --git a/rhwp-studio/src/command/commands/insert.ts b/rhwp-studio/src/command/commands/insert.ts
+index 6a7e7de87..f278df3eb 100644
+--- a/rhwp-studio/src/command/commands/insert.ts
++++ b/rhwp-studio/src/command/commands/insert.ts
+@@ -1,5 +1,6 @@
+ import type { CommandDef } from '../types';
+ import { hyperlinkCommand, editHyperlinkCommand, removeHyperlinkCommand } from './hyperlink';
++import { memoCommands } from './memo';
+ import { PicturePropsDialog } from '@/ui/picture-props-dialog';
+ import { ChartDataDialog } from '@/ui/chart-data-dialog';
+ import { chartTargetFromSelection, matchChartRef } from '@/core/chart-data-target';
+@@ -258,7 +259,7 @@ export const insertCommands: CommandDef[] = [
+   stub('insert:caption-bottom', t('command.insert.captionBottom.registryLabel')),
+   stub('insert:caption-none', t('command.insert.captionNone.label')),
+   stub('insert:para-band', t('command.insert.paraBand.label')),
+-  stub('insert:comment', t('command.insert.comment.label'), 'icon-comment'),
++  ...memoCommands,
+   {
+     id: 'insert:footnote',
+     label: t('command.insert.footnote.label'),
+diff --git a/rhwp-studio/src/command/commands/memo.ts b/rhwp-studio/src/command/commands/memo.ts
+new file mode 100644
+index 000000000..ec0c062b2
+--- /dev/null
++++ b/rhwp-studio/src/command/commands/memo.ts
+@@ -0,0 +1,87 @@
++import type { CommandDef, CommandServices } from '../types';
++import type { WasmBridge } from '@/core/wasm-bridge';
++import { hyperlinkRange } from '@/core/hyperlink';
++import { MemoInsertDialog, MemoListDialog } from '@/ui/memo-dialog';
++import { showToast } from '@/ui/toast';
++
++/** 메모 조작을 undo 가능한 snapshot 으로 실행한다. 실행되지 않았으면 오류를 던진다. */
++function runMemoOperation(services: CommandServices, operationType: string, edit: (wasm: WasmBridge) => boolean | void): void {
++  const ih = services.getInputHandler();
++  if (!ih || !services.getContext().isEditable || services.getContext().isFormMode) {
++    throw new Error('편집할 수 있는 상태에서 메모를 고쳐 주세요.');
++  }
++  let applied = false;
++  ih.executeOperation({
++    kind: 'snapshot',
++    operationType,
++    operation: wasm => {
++      const changed = edit(wasm);
++      applied = true;
++      // 같은 내용으로 저장하면 undo 항목을 만들지 않는다.
++      return changed === false ? null : ih.getCursorPosition();
++    },
++  });
++  if (!applied) throw new Error('메모를 고칠 수 없습니다. 편집 모드를 확인해 주세요.');
++}
++
++export const memoCommands: CommandDef[] = [
++  {
++    id: 'insert:comment',
++    label: '메모 넣기',
++    icon: 'icon-comment',
++    opensDialog: true,
++    canExecute: ctx => ctx.hasDocument && ctx.isEditable && !ctx.isFormMode
++      && !ctx.inCellSelectionMode && !ctx.inPictureObjectSelection && !ctx.inTableObjectSelection,
++    execute(services) {
++      const ih = services.getInputHandler();
++      if (!ih) return;
++      try {
++        if (!ih.canEditHyperlink()) throw new Error('본문·표 셀·글상자의 글자를 선택한 뒤 메모를 넣어 주세요.');
++        const selection = ih.hasSelection() ? structuredClone(ih.getSelection()) : null;
++        if (!selection) throw new Error('메모를 달 글자를 먼저 선택해 주세요.');
++        const { target, pos, start, end } = hyperlinkRange(ih.getCursorPosition(), selection);
++        if (start === end) throw new Error('메모를 달 글자를 먼저 선택해 주세요.');
++        const context = services.wasm.getHyperlinkContext(target);
++        const anchor = Array.from(context.text).slice(start, end).join('');
++        const generation = services.wasm.documentGeneration;
++        const dialog = new MemoInsertDialog(anchor, text => {
++          if (services.wasm.documentGeneration !== generation || services.getInputHandler() !== ih) {
++            throw new Error('편집 상태가 바뀌었습니다. 대화상자를 닫고 다시 열어 주세요.');
++          }
++          let applied = false;
++          ih.executeOperation({
++            kind: 'snapshot',
++            operationType: 'insertMemo',
++            selectionBefore: { ...selection, blockPhase: null },
++            operation: wasm => {
++              wasm.insertMemo(target, start, end, text);
++              applied = true;
++              return { ...pos, charOffset: end };
++            },
++          });
++          if (!applied) throw new Error('메모를 넣을 수 없습니다. 편집 모드를 확인해 주세요.');
++        });
++        dialog.afterClose = () => ih.focus();
++        dialog.show();
++      } catch (error) {
++        showToast({ message: error instanceof Error ? error.message : String(error) });
++      }
++    },
++  },
++  {
++    id: 'view:memos',
++    label: '메모 목록',
++    icon: 'icon-comment',
++    opensDialog: true,
++    canExecute: ctx => ctx.hasDocument,
++    execute(services) {
++      const dialog = new MemoListDialog({
++        list: () => services.wasm.getMemos(),
++        save: (number, text) => runMemoOperation(services, 'editMemo', wasm => wasm.setMemoText(number, text)),
++        remove: number => runMemoOperation(services, 'deleteMemo', wasm => wasm.deleteMemo(number)),
++      });
++      dialog.afterClose = () => services.getInputHandler()?.focus();
++      dialog.show();
++    },
++  },
++];
+diff --git a/rhwp-studio/src/ui/memo-dialog.ts b/rhwp-studio/src/ui/memo-dialog.ts
+new file mode 100644
+index 000000000..a901a8b5f
+--- /dev/null
++++ b/rhwp-studio/src/ui/memo-dialog.ts
+@@ -0,0 +1,159 @@
++import type { MemoInfo } from '@/core/memo';
++import { ModalDialog } from './dialog';
++
++function memoTextArea(label: string, value: string): HTMLTextAreaElement {
++  const area = document.createElement('textarea');
++  area.className = 'dialog-input';
++  area.rows = 4;
++  area.style.width = '100%';
++  area.style.boxSizing = 'border-box';
++  area.style.resize = 'vertical';
++  area.setAttribute('aria-label', label);
++  area.value = value;
++  return area;
++}
++
++function alertLine(): HTMLParagraphElement {
++  const error = document.createElement('p');
++  error.setAttribute('role', 'alert');
++  error.style.color = '#c00';
++  error.style.margin = '4px 0 0';
++  return error;
++}
++
++function message(error: unknown): string {
++  return error instanceof Error ? error.message : String(error);
++}
++
++/** 선택한 글자에 새 메모를 단다. */
++export class MemoInsertDialog extends ModalDialog {
++  private area!: HTMLTextAreaElement;
++  private error!: HTMLParagraphElement;
++
++  constructor(private anchorText: string, private apply: (text: string) => void) {
++    super('메모 넣기', 460);
++  }
++
++  protected createBody(): HTMLElement {
++    const body = document.createElement('div');
++    const anchor = document.createElement('p');
++    anchor.style.margin = '0 0 6px';
++    anchor.textContent = `대상: “${this.anchorText}”`;
++    this.area = memoTextArea('메모 내용', '');
++    this.error = alertLine();
++    body.append(anchor, this.area, this.error);
++    return body;
++  }
++
++  protected onConfirm(): boolean {
++    try {
++      this.apply(this.area.value);
++      return true;
++    } catch (error) {
++      this.error.textContent = message(error);
++      return false;
++    }
++  }
++
++  override show(): void {
++    super.show();
++    this.dialog.setAttribute('role', 'dialog');
++    this.dialog.setAttribute('aria-modal', 'true');
++    this.dialog.setAttribute('aria-label', '메모 넣기');
++    this.dialog.querySelector<HTMLButtonElement>('.dialog-btn-primary')!.textContent = '넣기';
++    this.area.focus();
++  }
++}
++
++export interface MemoListActions {
++  list(): MemoInfo[];
++  save(number: number, text: string): void;
++  remove(number: number): void;
++}
++
++/** 문서의 메모를 보고, 본문을 고치거나 지운다. 각 메모의 조작은 즉시 문서에 반영된다. */
++export class MemoListDialog extends ModalDialog {
++  private body!: HTMLDivElement;
++
++  constructor(private actions: MemoListActions) {
++    super('메모', 560);
++  }
++
++  protected createBody(): HTMLElement {
++    this.body = document.createElement('div');
++    this.body.style.maxHeight = '60vh';
++    this.body.style.overflowY = 'auto';
++    this.render();
++    return this.body;
++  }
++
++  private render(): void {
++    this.body.replaceChildren();
++    let memos: MemoInfo[];
++    try {
++      memos = this.actions.list();
++    } catch (error) {
++      const failed = alertLine();
++      failed.textContent = message(error);
++      this.body.append(failed);
++      return;
++    }
++    const summary = document.createElement('p');
++    summary.setAttribute('role', 'status');
++    summary.style.margin = '0 0 8px';
++    summary.textContent = memos.length ? `메모 ${memos.length}개` : '메모가 없습니다.';
++    this.body.append(summary);
++    for (const memo of memos) {
++      const label = `메모 ${memo.number}`;
++      const group = document.createElement('section');
++      group.setAttribute('role', 'group');
++      group.setAttribute('aria-label', label);
++      group.style.borderTop = '1px solid #ddd';
++      group.style.padding = '8px 0';
++      const head = document.createElement('p');
++      head.style.margin = '0 0 4px';
++      const anchor = memo.start === null ? '여러 문단' : `“${memo.anchorText}”`;
++      head.textContent = `${label} · 대상 ${anchor}${memo.author ? ` · ${memo.author}` : ''}`;
++      const area = memoTextArea(`${label} 내용`, memo.text);
++      const error = alertLine();
++      const buttons = document.createElement('div');
++      buttons.style.display = 'flex';
++      buttons.style.gap = '6px';
++      buttons.style.marginTop = '4px';
++      const button = (text: string, aria: string, run: () => void) => {
++        const b = document.createElement('button');
++        b.type = 'button';
++        b.className = 'dialog-btn';
++        b.textContent = text;
++        b.setAttribute('aria-label', aria);
++        b.addEventListener('click', () => {
++          try {
++            run();
++            this.render();
++          } catch (e) {
++            error.textContent = message(e);
++          }
++        });
++        buttons.append(b);
++      };
++      button('저장', `${label} 저장`, () => this.actions.save(memo.number, area.value));
++      button('지우기', `${label} 지우기`, () => this.actions.remove(memo.number));
++      group.append(head, area, buttons, error);
++      this.body.append(group);
++    }
++  }
++
++  protected onConfirm(): void {}
++
++  override show(): void {
++    super.show();
++    this.dialog.setAttribute('role', 'dialog');
++    this.dialog.setAttribute('aria-modal', 'true');
++    this.dialog.setAttribute('aria-label', '메모 목록');
++    const footer = this.dialog.querySelector<HTMLElement>('.dialog-footer')!;
++    const [close, cancel] = footer.querySelectorAll<HTMLButtonElement>('.dialog-btn');
++    close.textContent = '닫기';
++    close.setAttribute('aria-label', '메모 목록 닫기');
++    cancel?.remove();
++  }
++}
