@@ -1,5 +1,5 @@
 diff --git a/rhwp-studio/src/core/wasm-bridge.ts b/rhwp-studio/src/core/wasm-bridge.ts
-index 58162bab6..ad5351ec1 100644
+index 58162bab6..2a7e5481a 100644
 --- a/rhwp-studio/src/core/wasm-bridge.ts
 +++ b/rhwp-studio/src/core/wasm-bridge.ts
 @@ -7,9 +7,11 @@ import type { CanvasMetricDocument } from './canvas-metric-session';
@@ -320,9 +320,9 @@ index 58162bab6..ad5351ec1 100644
 +  }
 +
 +  /** [start, end) 글자 범위에 메모를 단다. 새 메모 번호를 돌려준다. */
-+  insertMemo(target: HyperlinkTarget, start: number, end: number, text: string): number {
++  insertMemo(target: HyperlinkTarget, start: number, end: number, text: string, createdAt: number): number {
 +    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
-+    return this.doc.insertMemoEx(JSON.stringify({ target, start, end, text }));
++    return this.doc.insertMemoEx(JSON.stringify({ target, start, end, text, createdAt }));
 +  }
 +
 +  setMemoText(number: number, text: string): boolean {
@@ -14545,10 +14545,10 @@ index c7f2d2c5f..e3efa8b55 100644
  pub mod text_security;
 diff --git a/src/document_core/memo.rs b/src/document_core/memo.rs
 new file mode 100644
-index 000000000..3230c03b8
+index 000000000..dcbc80cef
 --- /dev/null
 +++ b/src/document_core/memo.rs
-@@ -0,0 +1,365 @@
+@@ -0,0 +1,378 @@
 +//! 한컴 메모(주석) 조회·넣기·고치기·지우기.
 +//!
 +//! 메모는 본문 범위를 감싸는 MEMO 필드와 그 필드가 소유한 메모 본문 문단이다. HWPX 는
@@ -14591,6 +14591,10 @@ index 000000000..3230c03b8
 +    }
 +
 +    /// 선택한 글자 범위에 메모를 단다. 새 메모 번호를 돌려준다.
++    ///
++    /// `created_ms` 는 만든 시각(Unix ms)이다. 한컴은 command 의 네·다섯째 토큰에 이 시각을
++    /// FILETIME 하위·상위 32비트로 저장하고 메모 칸에 표시한다. 호출자가 넘겨야 기록 재생이
++    /// 같은 결과를 낸다.
 +    pub fn insert_memo_native(
 +        &mut self,
 +        target: &HyperlinkTarget,
@@ -14598,7 +14602,11 @@ index 000000000..3230c03b8
 +        end: usize,
 +        text: &str,
 +        author: &str,
++        created_ms: f64,
 +    ) -> Result<u32, HwpError> {
++        if !created_ms.is_finite() || created_ms < 0.0 {
++            return Err(invalid("메모 시각이 올바르지 않습니다"));
++        }
 +        self.validate_hyperlink_paragraph(target)?;
 +        let mut candidate = self.hyperlink_paragraph(target)?.clone();
 +        let len = candidate.text.chars().count();
@@ -14636,6 +14644,9 @@ index 000000000..3230c03b8
 +        let field_id = max_id
 +            .checked_add(1)
 +            .ok_or_else(|| invalid("필드 ID 공간이 소진되었습니다"))?;
++        // FILETIME: 1601-01-01 부터 100ns 단위.
++        let filetime = (created_ms as u64 + 11_644_473_600_000) * 10_000;
++        let (time_low, time_high) = (filetime & 0xffff_ffff, filetime >> 32);
 +        let author: String = author
 +            .chars()
 +            .filter(|c| !c.is_control() && !matches!(c, '/' | '\\' | ';'))
@@ -14669,7 +14680,9 @@ index 000000000..3230c03b8
 +            Control::Field(Field {
 +                field_type: FieldType::Memo,
 +                ctrl_id: tags::FIELD_MEMO,
-+                command: format!("MEMO/65535/{number}/{field_id}/{field_id}/{author}/\\;;"),
++                command: format!("MEMO/65535/{number}/{time_low}/{time_high}/{author}/\\;;"),
++                // 한컴 메모는 bit 0 을 켠다(저장기가 bit 15 를 더해 0x8001).
++                properties: 1,
 +                memo_index: number,
 +                field_id,
 +                memo_paragraphs,
@@ -14948,7 +14961,7 @@ index 67000c054..790551f4b 100644
      pub fn is_editable_in_form(&self) -> bool {
          self.properties & 1 != 0
 diff --git a/src/parser/body_text.rs b/src/parser/body_text.rs
-index 036e8bf54..3b4ad4e1c 100644
+index 036e8bf54..8173103b6 100644
 --- a/src/parser/body_text.rs
 +++ b/src/parser/body_text.rs
 @@ -76,8 +76,29 @@ impl std::error::Error for BodyTextError {}
@@ -14990,7 +15003,7 @@ index 036e8bf54..3b4ad4e1c 100644
          let last_para0_idx = all_records
              .iter()
              .rposition(|r| r.tag_id == tags::HWPTAG_PARA_HEADER && r.level == 0);
-@@ -146,7 +167,145 @@ pub fn parse_body_text_section(data: &[u8]) -> Result<Section, BodyTextError> {
+@@ -146,7 +167,131 @@ pub fn parse_body_text_section(data: &[u8]) -> Result<Section, BodyTextError> {
          }
      }
  
@@ -15000,11 +15013,9 @@ index 036e8bf54..3b4ad4e1c 100644
 +
 +/// 구역 끝 메모 리스트를 본문 레코드에서 떼어 낸다.
 +///
-+/// 한컴 저장본은 마지막 본문 문단 뒤에 빈 root 문단(level 0)을 두고 그 아래에
-+/// `MEMO_LIST(메모 번호) → LIST_HEADER → 메모 본문 문단(level 1)` 묶음을 반복한다
-+/// (`serializer::body_text::serialize_memo_tail` 과 같은 계약). 떼어 내지 않으면 root
-+/// 문단이 본문의 빈 문단으로 남고, 뒤의 LIST_HEADER 가 확장 바탕쪽으로 오인된다.
-+/// root 문단에 글자나 컨트롤이 있으면 본문 문단으로 남기고 메모 묶음만 뗀다.
++/// 한컴 저장본은 마지막 본문 문단의 자식 레코드 뒤에 `MEMO_LIST(메모 번호) → LIST_HEADER →
++/// 메모 본문 문단(level 1)` 묶음을 반복한다. 떼어 내지 않으면 메모 본문이 필드에 붙지 않고,
++/// 뒤의 LIST_HEADER 가 확장 바탕쪽으로 오인된다. 그 문단은 비어 있어도 본문 문단이다.
 +fn split_memo_tail(records: Vec<Record>) -> (Vec<Record>, Vec<MemoList>) {
 +    let Some(last_para0) = records
 +        .iter()
@@ -15053,21 +15064,9 @@ index 036e8bf54..3b4ad4e1c 100644
 +    }
 +    let memo_end = idx;
 +
-+    let root_is_empty = {
-+        let root_children = &records[last_para0 + 1..memo_start];
-+        !root_children.iter().any(|r| {
-+            r.level == 1
-+                && (r.tag_id == tags::HWPTAG_PARA_TEXT || r.tag_id == tags::HWPTAG_CTRL_HEADER)
-+        })
-+    };
-+    let keep_until = if root_is_empty {
-+        last_para0
-+    } else {
-+        memo_start
-+    };
 +    let mut records = records;
 +    let tail = records.split_off(memo_end);
-+    records.truncate(keep_until);
++    records.truncate(memo_start);
 +    records.extend(tail);
 +    (records, memo_lists)
 +}
@@ -15211,10 +15210,28 @@ index e4467db3e..f528582d2 100644
      // BinData 로드 시도
      let bin_data_content = load_bin_data_content_lenient(
 diff --git a/src/serializer/body_text.rs b/src/serializer/body_text.rs
-index 0e94a0864..e1b57350a 100644
+index 0e94a0864..f6a2ab941 100644
 --- a/src/serializer/body_text.rs
 +++ b/src/serializer/body_text.rs
-@@ -169,18 +169,34 @@ fn serialize_master_page_tail(section: &Section, records: &mut Vec<Record>) {
+@@ -118,7 +118,7 @@ fn serialize_section_inner(section: &Section, version: Option<u32>) -> Vec<u8> {
+         }
+     });
+     for (i, para) in section.paragraphs.iter().enumerate() {
+-        let is_last = i == para_count - 1 && !has_memo_tail;
++        let is_last = i == para_count - 1;
+         let para_ref = if i == 0 {
+             first_para_with_secd.as_ref().unwrap_or(para)
+         } else {
+@@ -127,7 +127,7 @@ fn serialize_section_inner(section: &Section, version: Option<u32>) -> Vec<u8> {
+         serialize_paragraph_with_msb(para_ref, 0, is_last, &mut records);
+     }
+     if has_memo_tail {
+-        serialize_memo_tail(section, &memo_lists, &mut records);
++        serialize_memo_tail(&memo_lists, &mut records);
+     }
+     serialize_master_page_tail(section, &mut records);
+     // 변경추적 병합 문단 여부(UINT16)는 5.0.3.2부터 존재한다. 재귀로 생성한
+@@ -169,65 +169,39 @@ fn serialize_master_page_tail(section: &Section, records: &mut Vec<Record>) {
  
  fn collect_memo_lists(section: &Section) -> Vec<(u32, Vec<Paragraph>)> {
      let mut memo_lists = Vec::new();
@@ -15236,7 +15253,7 @@ index 0e94a0864..e1b57350a 100644
                  {
 -                    memo_lists.push((field.memo_index, field.memo_paragraphs.clone()));
 +                    memo_lists.push((field.memo_number(), field.memo_paragraphs.clone()));
-+                }
+                 }
 +                Control::Table(table) => {
 +                    for cell in &table.cells {
 +                        collect_memo_lists_in(&cell.paragraphs, memo_lists);
@@ -15246,7 +15263,7 @@ index 0e94a0864..e1b57350a 100644
 +                    if let Some(text_box) = shape.drawing().and_then(|d| d.text_box.as_ref()) {
 +                        collect_memo_lists_in(&text_box.paragraphs, memo_lists);
 +                    }
-                 }
++                }
 +                _ => {}
              }
          }
@@ -15254,7 +15271,107 @@ index 0e94a0864..e1b57350a 100644
 -    memo_lists
  }
  
- fn serialize_memo_tail(
+-fn serialize_memo_tail(
+-    section: &Section,
+-    memo_lists: &[(u32, Vec<Paragraph>)],
+-    records: &mut Vec<Record>,
+-) {
+-    if memo_lists.is_empty() {
+-        return;
+-    }
+-
+-    // HWP5 spec: 메모 관련 정보는 마지막 구역 끝에 문단 리스트 형태로 저장된다.
+-    // 한컴 저장본은 마지막 본문 문단의 조판 속성을 복제한 빈 root 문단 아래에
+-    // MEMO_LIST, LIST_HEADER, 메모 본문 문단을 순서대로 둔다.
+-    let last_para = section.paragraphs.last();
+-    let mut root = Paragraph {
+-        char_count: 1,
+-        para_shape_id: last_para.map_or(0, |p| p.para_shape_id),
+-        style_id: last_para.map_or(0, |p| p.style_id),
+-        char_shapes: last_para
+-            .and_then(|p| p.char_shapes.first().cloned())
+-            .map(|mut cs| {
+-                cs.start_pos = 0;
+-                vec![cs]
+-            })
+-            .unwrap_or_else(|| {
+-                vec![CharShapeRef {
+-                    start_pos: 0,
+-                    char_shape_id: 0,
+-                }]
+-            }),
+-        line_segs: last_para
+-            .map(|p| p.serializable_line_segs().to_vec())
+-            .filter(|segs| !segs.is_empty())
+-            .unwrap_or_else(|| Paragraph::new_empty().line_segs),
+-        raw_header_extra: vec![0; 12],
+-        ..Default::default()
+-    };
+-    for seg in &mut root.line_segs {
+-        seg.vertical_pos = seg
+-            .vertical_pos
+-            .saturating_add(seg.line_height)
+-            .saturating_add(seg.line_spacing);
+-    }
+-    root.has_para_text = false;
+-    serialize_paragraph_with_msb(&root, 0, true, records);
+-
++fn serialize_memo_tail(memo_lists: &[(u32, Vec<Paragraph>)], records: &mut Vec<Record>) {
++    // 한컴 저장본은 마지막 본문 문단의 자식 레코드 뒤에 MEMO_LIST, LIST_HEADER, 메모 본문
++    // 문단을 메모마다 이어 쓴다(level 1). 빈 root 문단을 따로 두지 않는다.
+     for (memo_index, paragraphs) in memo_lists {
+         records.push(Record {
+             tag_id: tags::HWPTAG_MEMO_LIST,
+@@ -1479,6 +1453,9 @@ fn control_char_code_and_id(ctrl: &Control) -> (u16, u32) {
+         // 통째로 버린다(0자·1쪽). `CTRL_CHAR_OVERLAP` 상수는 이름과 달리 'tdut'(덧말)이다.
+         Control::Ruby(_) => (0x0017, tags::CTRL_CHAR_OVERLAP),
+         Control::CharOverlap(_) => (0x0017, tags::CTRL_TCPS),
++        // 한컴 메모는 CTRL_HEADER 가 `%unk` 여도 본문 시작 마커는 `%%me` 다. HWP5 에서 읽은
++        // 메모(ctrl_id `%unk`)를 그대로 쓰면 한글이 메모로 인식하지 못한다.
++        Control::Field(f) if f.is_hancom_memo() => (0x0003, tags::FIELD_MEMO),
+         Control::Field(f) => (0x0003, f.ctrl_id),
+         Control::Equation(_) => (0x000B, tags::CTRL_EQUATION),
+         Control::Form(_) => (0x000B, tags::CTRL_FORM),
+@@ -2189,39 +2166,6 @@ mod tests {
+             1,
+             "조판 전용 보강 줄은 레코드에서 제외된다"
+         );
+-
+-        memo_root_copies_only_source_line_segments();
+-    }
+-
+-    fn memo_root_copies_only_source_line_segments() {
+-        let mut last = Paragraph::new_empty();
+-        last.line_segs = vec![
+-            LineSeg {
+-                text_start: 0,
+-                line_height: 500,
+-                ..Default::default()
+-            },
+-            LineSeg {
+-                text_start: 1,
+-                line_height: 500,
+-                ..Default::default()
+-            },
+-        ];
+-        last.layout_only_fill_lines = 1;
+-        let section = Section {
+-            paragraphs: vec![last],
+-            ..Default::default()
+-        };
+-        let memo_lists = vec![(1, vec![Paragraph::new_empty()])];
+-        let mut records = Vec::new();
+-
+-        serialize_memo_tail(&section, &memo_lists, &mut records);
+-
+-        let root_lines = records
+-            .iter()
+-            .find(|record| record.tag_id == tags::HWPTAG_PARA_LINE_SEG)
+-            .expect("memo root line record");
+-        assert_eq!(root_lines.data.len(), 36, "one source LineSeg only");
+     }
+ 
+     /// PARA_RANGE_TAG 라운드트립
 diff --git a/src/serializer/hwpx/field.rs b/src/serializer/hwpx/field.rs
 index f3fd6cf21..48dc48015 100644
 --- a/src/serializer/hwpx/field.rs
@@ -15378,10 +15495,10 @@ index 8829aec04..7f7d96857 100644
              } else {
 diff --git a/src/wasm_api/memo.rs b/src/wasm_api/memo.rs
 new file mode 100644
-index 000000000..26f244147
+index 000000000..534b47a6d
 --- /dev/null
 +++ b/src/wasm_api/memo.rs
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,54 @@
 +//! Studio 메모(주석) API의 JSON options 어댑터.
 +use super::HwpDocument;
 +use crate::document_core::hyperlink::HyperlinkTarget;
@@ -15397,6 +15514,8 @@ index 000000000..26f244147
 +    text: String,
 +    #[serde(default)]
 +    author: String,
++    /// 만든 시각 (Unix ms). 한컴이 메모 칸에 표시한다.
++    created_at: f64,
 +}
 +
 +#[wasm_bindgen]
@@ -15407,13 +15526,13 @@ index 000000000..26f244147
 +        serde_json::to_string(&self.core.memos_native()).unwrap_or_else(|_| "[]".into())
 +    }
 +
-+    /// 범위에 메모를 단다. options: `{target, start, end, text, author?}`. 새 메모 번호를 돌려준다.
++    /// 범위에 메모를 단다. options: `{target, start, end, text, author?, createdAt}`. 새 메모 번호를 돌려준다.
 +    #[wasm_bindgen(js_name = insertMemoEx)]
 +    pub fn insert_memo_ex(&mut self, options_json: &str) -> Result<u32, JsValue> {
 +        let o: InsertOptions =
 +            serde_json::from_str(options_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
 +        self.core
-+            .insert_memo_native(&o.target, o.start, o.end, &o.text, &o.author)
++            .insert_memo_native(&o.target, o.start, o.end, &o.text, &o.author, o.created_at)
 +            .map_err(Into::into)
 +    }
 +
@@ -15476,7 +15595,7 @@ index 6a7e7de87..f278df3eb 100644
      label: t('command.insert.footnote.label'),
 diff --git a/rhwp-studio/src/command/commands/memo.ts b/rhwp-studio/src/command/commands/memo.ts
 new file mode 100644
-index 000000000..ec0c062b2
+index 000000000..c9903d618
 --- /dev/null
 +++ b/rhwp-studio/src/command/commands/memo.ts
 @@ -0,0 +1,87 @@
@@ -15536,7 +15655,7 @@ index 000000000..ec0c062b2
 +            operationType: 'insertMemo',
 +            selectionBefore: { ...selection, blockPhase: null },
 +            operation: wasm => {
-+              wasm.insertMemo(target, start, end, text);
++              wasm.insertMemo(target, start, end, text, Date.now());
 +              applied = true;
 +              return { ...pos, charOffset: end };
 +            },

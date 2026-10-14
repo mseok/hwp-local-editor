@@ -23,8 +23,8 @@ const files = [];
     d.insertText(0, 2, 0, 'NEW-ANCHOR plain'); d.splitParagraph(0, 2, 16);
     const table = JSON.parse(d.createTable(0, 3, 0, 1, 2));
     d.insertTextInCell(0, table.paraIdx, table.controlIdx, 0, 0, 0, 'CELL-ANCHOR');
-    d.insertMemoEx(json({target: {section: 0, para: 0, cellPath: []}, start: 0, end: 8, text: '첫 메모'}));
-    d.insertMemoEx(json({target: {section: 0, para: 1, cellPath: []}, start: 0, end: 8, text: '둘째 메모'}));
+    d.insertMemoEx(json({target: {section: 0, para: 0, cellPath: []}, start: 0, end: 8, text: '첫 메모', createdAt: Date.UTC(2026, 9, 14, 5, 30)}));
+    d.insertMemoEx(json({target: {section: 0, para: 1, cellPath: []}, start: 0, end: 8, text: '둘째 메모', createdAt: Date.UTC(2026, 9, 14, 5, 30)}));
     for (const format of ['hwp', 'hwpx']) {
       const file = path.join(root, 'memo.' + format);
       await writeFile(file, format === 'hwp' ? d.exportHwp() : d.exportHwpx()); files.push(file);

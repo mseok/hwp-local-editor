@@ -11,7 +11,8 @@ const HWPTAG_MEMO_LIST = 0x10 + 77;
 const body = para => ({section: 0, para, cellPath: []});
 const paragraphText = (d, para) => d.getTextRange(0, para, 0, d.getParagraphLength(0, para));
 const memos = d => JSON.parse(d.getMemos()).map(({number, target, start, end, anchorText, text}) => ({number, target, start, end, anchorText, text}));
-const insert = (d, target, start, end, text) => d.insertMemoEx(JSON.stringify({target, start, end, text}));
+const CREATED = Date.UTC(2026, 9, 14, 5, 30); // fixed so saved bytes are reproducible
+const insert = (d, target, start, end, text) => d.insertMemoEx(JSON.stringify({target, start, end, text, createdAt: CREATED}));
 
 // Three memos: in the first paragraph (which also holds the section and column controls), in a second
 // paragraph with a two-line body, and inside a table cell.
@@ -122,5 +123,72 @@ test('deleting a memo keeps the anchored text and the other memos', () => {
       } finally {r.free();}
     }
     assert.throws(() => d.deleteMemo(2), /찾을 수 없습니다/);
+  } finally {d.free();}
+});
+
+// Hancom's own HWP memo layout (upstream sample samples/issue5866/memo_field_hwp5.hwp): every memo starts with a `%%me`
+// PARA_TEXT marker even though its CTRL_HEADER is `%unk` with flags 0x8001, the command carries the creation FILETIME,
+// and MEMO_LIST groups follow the children of the real last body paragraph. Hancom drew no balloon for memos written
+// with a `%unk` text marker and left the balloon empty when the lists hung off an extra empty paragraph.
+function memoLayout(bytes) {
+  const records = hwpRecords(Buffer.from(bytes));
+  const markers = [], headers = [];
+  for (const r of records) {
+    if (r.tag === 67) for (let k = 0; k + 16 <= r.body.length; k += 2) {
+      if (r.body.readUInt16LE(k) === 3 && r.body.readUInt16LE(k + 14) === 3) {
+        const id = Buffer.from(r.body.subarray(k + 2, k + 6)).reverse().toString('latin1');
+        if (id.includes('me') || id.includes('unk')) markers.push(id);
+        k += 14;
+      }
+    }
+    if (r.tag === 71 && r.body.length > 11) {
+      const len = r.body.readUInt16LE(9), command = r.body.subarray(11, 11 + len * 2).toString('utf16le');
+      if (command.startsWith('MEMO/')) headers.push({id: Buffer.from(r.body.subarray(0, 4)).reverse().toString('latin1'), props: r.body.readUInt32LE(4), command});
+    }
+  }
+  const firstList = records.findIndex(r => r.tag === HWPTAG_MEMO_LIST);
+  const owner = records.slice(0, firstList).findLastIndex(r => r.tag === 66 && r.level === 0);
+  const bodyParagraphs = records.filter((r, i) => r.tag === 66 && r.level === 0).length;
+  return {markers, headers, ownerIsLastParagraph: owner === records.findLastIndex(r => r.tag === 66 && r.level === 0), bodyParagraphs};
+}
+
+test('saved HWP memos use the Hancom layout, also after the file is read back and saved again', () => {
+  const {d} = makeDocument();
+  try {
+    const paragraphs = d.getParagraphCount(0);
+    const filetime = (BigInt(CREATED) + 11644473600000n) * 10000n;
+    const time = `${filetime & 0xffffffffn}/${filetime >> 32n}`;
+    const check = bytes => {
+      const layout = memoLayout(bytes);
+      assert.deepEqual(layout.markers, ['%%me', '%%me', '%%me']);
+      assert.deepEqual(layout.headers.map(h => [h.id, h.props]), [['%unk', 0x8001], ['%unk', 0x8001], ['%unk', 0x8001]]);
+      assert.deepEqual(layout.headers.map(h => h.command.split('/').slice(3, 5).join('/')), [time, time, time]);
+      assert.equal(layout.ownerIsLastParagraph, true);
+      assert.equal(layout.bodyParagraphs, paragraphs, 'no extra paragraph carries the memo lists');
+    };
+    const first = d.exportHwp(); check(first);
+    const reread = reopen(first);
+    try {reread.insertText(0, 0, 11, ' 추가'); check(reread.exportHwp());} finally {reread.free();}
+  } finally {d.free();}
+});
+
+test('a Hancom-made HWP memo keeps its body, author and layout through an edit and an HWP save', async () => {
+  const {execFileSync} = await import('node:child_process');
+  const source = execFileSync('git', ['-C', '.cache/rhwp', 'show', 'HEAD:samples/issue5866/memo_field_hwp5.hwp'], {maxBuffer: 1 << 26});
+  const d = reopen(source);
+  try {
+    assert.deepEqual(memos(d).map(m => [m.number, m.text]), [[1, '수정']]);
+    assert.equal(JSON.parse(d.getMemos())[0].author, 'CDC');
+    const paragraphs = d.getParagraphCount(0), original = memoLayout(source);
+    assert.equal(d.setMemoText(1, '수정 확인'), true);
+    const saved = d.exportHwp(), layout = memoLayout(saved);
+    assert.deepEqual(layout.markers, original.markers);
+    assert.deepEqual(layout.headers, original.headers);
+    assert.equal(layout.ownerIsLastParagraph, true);
+    const r = reopen(saved);
+    try {
+      assert.deepEqual(memos(r).map(m => [m.number, m.text]), [[1, '수정 확인']]);
+      assert.equal(r.getParagraphCount(0), paragraphs);
+    } finally {r.free();}
   } finally {d.free();}
 });
