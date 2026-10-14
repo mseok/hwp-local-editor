@@ -24,3 +24,22 @@ test('a text box created by the editor stores the Hancom text box bit and a plai
     try {assert.deepEqual(shapeStorageWords(Buffer.from(reopened.exportHwp())).map(v => v.toString(16)), ['1080000', '80000']);} finally {reopened.free();}
   } finally {d.free();}
 });
+
+// The text box property dialog changes only the model's vertical alignment. The HWP writer used to keep the original
+// LIST_HEADER bits, so a new box (stored as centred) saved centred while the editor and HWPX showed it at the top, and a
+// changed alignment was lost in HWP only.
+test('text box vertical alignment saves to HWP as shown and as changed in the editor', () => {
+  const d = new HwpDocument(blank);
+  try {
+    d.createBlankDocument(); d.insertText(0, 0, 0, 'HOST'); d.splitParagraph(0, 0, 'HOST'.length);
+    d.createShapeControl(control(1, 'textbox')); d.insertTextInCell(0, 1, 0, 0, 0, 0, 'BOX');
+    const align = doc => JSON.parse(doc.getShapeProperties(0, 1, 0)).tbVerticalAlign;
+    assert.equal(align(d), 'Top');
+    const reread = bytes => {const r = new HwpDocument(bytes); try {return align(r);} finally {r.free();}};
+    assert.equal(reread(d.exportHwp()), 'Top');
+    for (const value of ['Bottom', 'Center', 'Top']) {
+      d.setShapeProperties(0, 1, 0, JSON.stringify({tbVerticalAlign: value}));
+      assert.deepEqual([reread(d.exportHwp()), reread(d.exportHwpx())], [value, value]);
+    }
+  } finally {d.free();}
+});

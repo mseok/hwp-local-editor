@@ -12579,7 +12579,7 @@ index 16f230b54..8986d05e5 100644
        <!-- 주석 편집 모드 전용 도구상자 (숨김) -->
        <div class="tb-group tb-mode-group tb-note-group" hidden>
 diff --git a/rhwp-studio/src/core/mutation-method-registry.ts b/rhwp-studio/src/core/mutation-method-registry.ts
-index 2d05c75e1..472230600 100755
+index 2d05c75e1..6d36913bf 100755
 --- a/rhwp-studio/src/core/mutation-method-registry.ts
 +++ b/rhwp-studio/src/core/mutation-method-registry.ts
 @@ -31,13 +31,14 @@ export const MUTATING_METHODS: readonly string[] = [
@@ -12607,23 +12607,27 @@ index 2d05c75e1..472230600 100755
    // 스타일/번호 정의 (DocInfo 변이 포함)
    'updateStyle', 'updateStyleShapes', 'createStyle', 'deleteStyle', 'applyStyle',
    'applyCellStyle', 'createNumbering', 'ensureDefaultNumbering', 'ensureDefaultBullet',
-@@ -75,6 +77,8 @@ export const MUTATING_METHODS: readonly string[] = [
+@@ -75,6 +77,12 @@ export const MUTATING_METHODS: readonly string[] = [
    'setFieldValue', 'setFieldValueByName', 'removeFieldAt', 'insertClickHereField',
    'updateClickHereProps', 'setFormValue', 'setFormValueInCell',
    'replaceText', 'replaceOne', 'replaceAll',
 +  // 한컴 메모(주석)
 +  'insertMemo', 'setMemoText', 'deleteMemo',
++  // 중첩 표 (local editor) — 평면 메서드의 cellPath 변형
++  'setCellPropertiesByPath', 'setTablePropertiesByPath', 'mergeTableCellsByPath', 'splitTableCellByPath',
++  'splitTableCellIntoByPath', 'splitTableCellsInRangeByPath', 'splitTableByPath', 'mergeTableWithNextByPath',
++  'insertTableRowByPath', 'insertTableColumnByPath', 'deleteTableRowByPath', 'deleteTableColumnByPath',
    'addBookmark', 'deleteBookmark', 'renameBookmark',
    // lineseg 재계산 (#177 — 저장 lineseg 를 실제로 변경)
    'reflowLinesegs',
-@@ -123,6 +127,8 @@ export const EXCLUDED_NON_DOCUMENT: readonly string[] = [
+@@ -123,6 +131,8 @@ export const EXCLUDED_NON_DOCUMENT: readonly string[] = [
    // [#7002] 내부 클립보드 적재 — 문서는 읽기만 하고 복사본을 코어 버퍼에 담는다.
    'copySelection', 'copySelectionInCell', 'copySelectionInCellByPath',
    'copySelectionInHeaderFooter', 'copyControl', 'copyTableCellsTransposed',
 +  'copyTableCellsTransposedByPath',
-+  'getTableTransposeClipboardInfo',
    // [#7002] 조회 — 본문은 읽기뿐인데 `*_mut` 접근자를 거치느라 `&mut self` 가 됐다.
    'getCellCharPropertiesAtByPath', 'getCharShapeRunsInCellByPath',
++  'getCellParaPropertiesAtByPath', // (local editor) 같은 `*_mut` 접근자 조회
  ];
 diff --git a/rhwp-studio/src/engine/command.ts b/rhwp-studio/src/engine/command.ts
 index 6ec166661..78701ca35 100644
@@ -14545,10 +14549,10 @@ index c7f2d2c5f..e3efa8b55 100644
  pub mod text_security;
 diff --git a/src/document_core/memo.rs b/src/document_core/memo.rs
 new file mode 100644
-index 000000000..dcbc80cef
+index 000000000..029c92944
 --- /dev/null
 +++ b/src/document_core/memo.rs
-@@ -0,0 +1,378 @@
+@@ -0,0 +1,471 @@
 +//! 한컴 메모(주석) 조회·넣기·고치기·지우기.
 +//!
 +//! 메모는 본문 범위를 감싸는 MEMO 필드와 그 필드가 소유한 메모 본문 문단이다. HWPX 는
@@ -14578,6 +14582,9 @@ index 000000000..dcbc80cef
 +    pub text: String,
 +    #[serde(skip)]
 +    control_idx: usize,
++    /// 여러 문단에 걸친 메모의 끝: 같은 문단 목록 안의 문단 번호와 종료 마커 글자 위치.
++    #[serde(skip)]
++    span_end: Option<(usize, usize)>,
 +}
 +
 +impl DocumentCore {
@@ -14746,7 +14753,7 @@ index 000000000..dcbc80cef
 +    pub fn delete_memo_native(&mut self, number: u32) -> Result<(), HwpError> {
 +        let memo = self.find_memo(number)?;
 +        let (Some(start), Some(end)) = (memo.start, memo.end) else {
-+            return Err(invalid("여러 문단에 걸친 메모는 아직 지울 수 없습니다"));
++            return self.delete_spanning_memo(&memo);
 +        };
 +        self.validate_hyperlink_paragraph(&memo.target)?;
 +        let mut candidate = self.hyperlink_paragraph(&memo.target)?.clone();
@@ -14782,6 +14789,58 @@ index 000000000..dcbc80cef
 +            }
 +        }
 +        self.commit_field_paragraph(&memo.target, candidate)
++    }
++
++    /// 여러 문단에 걸친 메모를 지운다. 첫 문단의 시작 마커와 끝 문단의 종료 마커만 빼고
++    /// 사이 문단과 글자는 그대로 둔다.
++    fn delete_spanning_memo(&mut self, memo: &MemoInfo) -> Result<(), HwpError> {
++        let (end_idx, end_char) = memo
++            .span_end
++            .ok_or_else(|| invalid("메모의 끝을 같은 문단 목록에서 찾을 수 없습니다"))?;
++        let (paragraphs, start_idx) = self.hyperlink_paragraph_list(&memo.target)?;
++        let mut first = paragraphs[start_idx].clone();
++        let mut last = paragraphs
++            .get(end_idx)
++            .cloned()
++            .ok_or_else(|| invalid("메모 끝 문단을 찾을 수 없습니다"))?;
++        if self.document.header.version.major == 3
++            || [&first, &last]
++                .iter()
++                .any(|p| p.char_offsets.len() != p.text.chars().count())
++        {
++            return Err(invalid("이 문단의 메모는 아직 지울 수 없습니다"));
++        }
++        let ofe_idx = last
++            .orphan_field_ends
++            .iter()
++            .position(|o| o.char_idx == end_char && memo_end_matches(o, memo))
++            .ok_or_else(|| invalid("메모 종료 마커를 찾을 수 없습니다"))?;
++        let end_raw = raw_boundary(&last, end_char);
++        shift_axis(&mut last, end_raw, -8)?;
++        last.orphan_field_ends.remove(ofe_idx);
++
++        let begin = first.control_text_positions()[memo.control_idx];
++        let begin_raw = raw_boundary(&first, begin);
++        if begin_raw < 8 {
++            return Err(invalid("필드 마커 좌표가 올바르지 않습니다"));
++        }
++        shift_axis(&mut first, begin_raw, -8)?;
++        first.controls.remove(memo.control_idx);
++        if memo.control_idx < first.ctrl_data_records.len() {
++            first.ctrl_data_records.remove(memo.control_idx);
++        }
++        for range in &mut first.field_ranges {
++            if range.control_idx > memo.control_idx {
++                range.control_idx -= 1;
++            }
++        }
++        let mut end_target = memo.target.clone();
++        match end_target.cell_path.last_mut() {
++            Some(last_entry) => last_entry.2 = end_idx,
++            None => end_target.para = end_idx,
++        }
++        self.commit_field_paragraph(&memo.target, first)?;
++        self.commit_field_paragraph(&end_target, last)
 +    }
 +
 +    fn find_memo(&self, number: u32) -> Result<MemoInfo, HwpError> {
@@ -14879,6 +14938,28 @@ index 000000000..dcbc80cef
 +            match ctrl {
 +                Control::Field(f) if f.is_hancom_memo() => {
 +                    let range = p.field_ranges.iter().find(|r| r.control_idx == control_idx);
++                    let span_end = range
++                        .is_none()
++                        .then(|| find_span_end(paragraphs, idx, f))
++                        .flatten();
++                    let anchor_text = match (range, span_end) {
++                        (Some(r), _) => p
++                            .text
++                            .chars()
++                            .skip(r.start_char_idx)
++                            .take(r.end_char_idx.saturating_sub(r.start_char_idx))
++                            .collect(),
++                        (None, Some((end_idx, end_char))) => {
++                            let begin = p.control_text_positions()[control_idx];
++                            let mut parts = vec![p.text.chars().skip(begin).collect::<String>()];
++                            for middle in &paragraphs[idx + 1..end_idx] {
++                                parts.push(middle.text.clone());
++                            }
++                            parts.push(paragraphs[end_idx].text.chars().take(end_char).collect());
++                            parts.join("\n")
++                        }
++                        (None, None) => String::new(),
++                    };
 +                    out.push(MemoInfo {
 +                        number: f.memo_number(),
 +                        field_id: f.field_id,
@@ -14886,15 +14967,7 @@ index 000000000..dcbc80cef
 +                        target: target.clone(),
 +                        start: range.map(|r| r.start_char_idx),
 +                        end: range.map(|r| r.end_char_idx),
-+                        anchor_text: range
-+                            .map(|r| {
-+                                p.text
-+                                    .chars()
-+                                    .skip(r.start_char_idx)
-+                                    .take(r.end_char_idx.saturating_sub(r.start_char_idx))
-+                                    .collect()
-+                            })
-+                            .unwrap_or_default(),
++                        anchor_text,
 +                        text: f
 +                            .memo_paragraphs
 +                            .iter()
@@ -14902,6 +14975,7 @@ index 000000000..dcbc80cef
 +                            .collect::<Vec<_>>()
 +                            .join("\n"),
 +                        control_idx,
++                        span_end,
 +                    });
 +                }
 +                Control::Table(table) => {
@@ -14922,6 +14996,29 @@ index 000000000..dcbc80cef
 +            }
 +        }
 +    }
++}
++
++fn memo_end_matches(end: &crate::model::paragraph::OrphanFieldEnd, memo: &MemoInfo) -> bool {
++    (memo.field_id != 0 && end.begin_id_ref == memo.field_id)
++        || (end.memo_index != 0 && end.memo_index == memo.number)
++}
++
++/// 같은 문단 목록에서 메모의 종료 마커가 있는 문단과 글자 위치.
++fn find_span_end(paragraphs: &[Paragraph], start: usize, field: &Field) -> Option<(usize, usize)> {
++    let number = field.memo_number();
++    paragraphs
++        .iter()
++        .enumerate()
++        .skip(start + 1)
++        .find_map(|(idx, p)| {
++            p.orphan_field_ends
++                .iter()
++                .find(|o| {
++                    (field.field_id != 0 && o.begin_id_ref == field.field_id)
++                        || (o.memo_index != 0 && o.memo_index == number)
++                })
++                .map(|o| (idx, o.char_idx))
++        })
 +}
 +
 +fn invalid(message: &str) -> HwpError {
@@ -14961,7 +15058,7 @@ index 67000c054..790551f4b 100644
      pub fn is_editable_in_form(&self) -> bool {
          self.properties & 1 != 0
 diff --git a/src/parser/body_text.rs b/src/parser/body_text.rs
-index 036e8bf54..8173103b6 100644
+index 036e8bf54..4d92371ad 100644
 --- a/src/parser/body_text.rs
 +++ b/src/parser/body_text.rs
 @@ -76,8 +76,29 @@ impl std::error::Error for BodyTextError {}
@@ -15136,6 +15233,88 @@ index 036e8bf54..8173103b6 100644
  }
  
  /// 다단락 필드의 종료 마커에 짝 `fieldBegin` 의 id 를 채운다.
+@@ -159,7 +304,7 @@ pub fn parse_body_text_section(data: &[u8]) -> Result<Section, BodyTextError> {
+ /// (01752 실측). 짝을 못 찾은 종료 마커는 8유닛 슬롯만 지키고 id 는 0 으로 남긴다.
+ fn link_orphan_field_ends(paragraphs: &mut [Paragraph]) {
+     // (필드 인스턴스 id, HWP5 ctrl_id)
+-    let mut open_fields: Vec<(u32, u32)> = Vec::new();
++    let mut open_fields: Vec<(u32, u32, u32)> = Vec::new();
+     link_orphan_field_ends_with(paragraphs, &mut open_fields);
+ }
+ 
+@@ -168,17 +313,23 @@ fn link_orphan_field_ends(paragraphs: &mut [Paragraph]) {
+ /// **짝을 이미 채운 종료 마커에서도 스택을 pop 한다.** HWP5 종료 마커에는 짝 id 가 없어
+ /// 순서만이 짝이므로, 이미 이은 마커를 건너뛰면 그 짝이 스택에 남아 뒤에 오는 마커가
+ /// **엉뚱한 필드를 닫는다**. 채우기만 조건부로 한다.
+-fn link_orphan_field_ends_with(paragraphs: &mut [Paragraph], open_fields: &mut Vec<(u32, u32)>) {
++fn link_orphan_field_ends_with(
++    paragraphs: &mut [Paragraph],
++    open_fields: &mut Vec<(u32, u32, u32)>,
++) {
+     for para in paragraphs.iter_mut() {
+         // 이 문단의 종료 마커는 **앞서 열린** 필드를 닫는다.
+         for ofe in para.orphan_field_ends.iter_mut() {
+-            let Some((id, ctrl_id)) = open_fields.pop() else {
++            let Some((id, ctrl_id, memo_index)) = open_fields.pop() else {
+                 continue;
+             };
+             if ofe.begin_id_ref == 0 {
+                 ofe.begin_id_ref = id;
+                 ofe.begin_ctrl_id = ctrl_id;
+             }
++            if ofe.memo_index == 0 {
++                ofe.memo_index = memo_index;
++            }
+         }
+ 
+         // 이 문단에서 열리고 여기서 닫히지 않은 필드를 쌓는다.
+@@ -188,7 +339,12 @@ fn link_orphan_field_ends_with(paragraphs: &mut [Paragraph], open_fields: &mut V
+             };
+             let closed_here = para.field_ranges.iter().any(|fr| fr.control_idx == i);
+             if !closed_here && field.field_id != 0 {
+-                open_fields.push((field.field_id, field.ctrl_id));
++                let memo_index = if field.is_hancom_memo() {
++                    field.memo_number()
++                } else {
++                    0
++                };
++                open_fields.push((field.field_id, field.ctrl_id, memo_index));
+             }
+         }
+     }
+@@ -209,7 +365,7 @@ fn link_orphan_field_ends_with(paragraphs: &mut [Paragraph], open_fields: &mut V
+ /// 진짜로 짝이 없는 종료 마커는 여전히 `begin_id_ref == 0` 으로 남아 `#5252` 가드가
+ /// 그대로 버린다 — 07276·02899 의 본문 폐기 방지는 유지된다.
+ pub fn link_orphan_field_ends_across_sections(sections: &mut [crate::model::document::Section]) {
+-    let mut open_fields: Vec<(u32, u32)> = Vec::new();
++    let mut open_fields: Vec<(u32, u32, u32)> = Vec::new();
+     for section in sections.iter_mut() {
+         link_orphan_field_ends_with(&mut section.paragraphs, &mut open_fields);
+     }
+@@ -544,6 +700,10 @@ fn parse_para_text(data: &[u8]) -> ParaTextParts {
+                     //
+                     // HWPX 파서는 이미 같은 것을 `orphan_field_ends` 로 보존한다
+                     // (Task #1556). HWP5 쪽만 비어 있었다.
++                    let unit = |k: usize| {
++                        data.get(pos + 2 * k..pos + 2 * k + 2)
++                            .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]))
++                    };
+                     orphan_field_ends.push(OrphanFieldEnd {
+                         char_idx: char_count,
+                         // HWP5 PARA_TEXT 의 종료 마커는 짝 id 를 싣지 않는다
+@@ -552,6 +712,12 @@ fn parse_para_text(data: &[u8]) -> ParaTextParts {
+                         begin_id_ref: 0,
+                         field_id: 0,
+                         begin_ctrl_id: 0,
++                        // 한컴 메모 종료 마커(`%me`)는 여섯째 유닛에 메모 번호를 싣는다.
++                        memo_index: if unit(1) == 0x6d65 && unit(2) == 0x0025 {
++                            u32::from(unit(5))
++                        } else {
++                            0
++                        },
+                     });
+                 }
+             } else if is_extended_only_ctrl_char(ch) {
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
 index e4467db3e..f528582d2 100644
 --- a/src/parser/mod.rs
@@ -15210,10 +15389,66 @@ index e4467db3e..f528582d2 100644
      // BinData 로드 시도
      let bin_data_content = load_bin_data_content_lenient(
 diff --git a/src/serializer/body_text.rs b/src/serializer/body_text.rs
-index 0e94a0864..f6a2ab941 100644
+index 0e94a0864..1f5587e34 100644
 --- a/src/serializer/body_text.rs
 +++ b/src/serializer/body_text.rs
-@@ -118,7 +118,7 @@ fn serialize_section_inner(section: &Section, version: Option<u32>) -> Vec<u8> {
+@@ -24,23 +24,42 @@ use crate::parser::tags;
+ 
+ /// Section을 레코드 바이너리 스트림으로 직렬화
+ pub fn serialize_section(section: &Section) -> Vec<u8> {
+-    serialize_section_inner(section, None)
++    serialize_section_inner(section, None, None, true)
+ }
+ 
+ /// FileHeader에 실제 기록할 버전으로 새 문단 헤더를 완성한다.
+ /// version은 FileHeader[32..36]의 little-endian UINT32다.
+ pub(crate) fn serialize_section_for_version(section: &Section, version: u32) -> Vec<u8> {
+-    serialize_section_inner(section, Some(version))
++    serialize_section_inner(section, Some(version), None, true)
+ }
+ 
+-fn serialize_section_inner(section: &Section, version: Option<u32>) -> Vec<u8> {
++/// 문서 단위 저장용: 메모 본문 묶음을 호출자가 정한다.
++///
++/// 한글은 모든 구역의 메모 본문을 **마지막 구역 끝**에서만 읽는다(2구역 실측: 앞 구역 끝에
++/// 둔 본문은 빈 메모로 표시). 그래서 저장기는 마지막 구역에만 전체 목록을 넘기고 나머지
++/// 구역에는 빈 목록을 넘긴다. `allow_raw` 가 false 면 원본 스트림을 재사용하지 않는다.
++pub(crate) fn serialize_section_with_memo_lists(
++    section: &Section,
++    version: u32,
++    memo_lists: &[(u32, Vec<Paragraph>)],
++    allow_raw: bool,
++) -> Vec<u8> {
++    serialize_section_inner(section, Some(version), Some(memo_lists), allow_raw)
++}
++
++fn serialize_section_inner(
++    section: &Section,
++    version: Option<u32>,
++    memo_lists_override: Option<&[(u32, Vec<Paragraph>)]>,
++    allow_raw: bool,
++) -> Vec<u8> {
+     // 원본 스트림이 있으면 그대로 반환 (완벽한 라운드트립).
+     //
+     // [#4488] 다만 공개 모델 직접 변경은 raw_stream 을 무효화하지 않으므로,
+     // 파싱(+로드 픽스업) 시점에 봉인한 (모델, raw) 다이제스트 쌍과 현재 상태가
+     // 둘 다 일치할 때만 통과한다 — 불일치·raw 교체는 아래 모델 writer 로
+     // 재생성한다. 봉인 계약은 model::raw_provenance 참조.
+-    if section.raw_provenance_permits_reuse() {
++    if allow_raw && section.raw_provenance_permits_reuse() {
+         if let Some(ref raw) = section.raw_stream {
+             return raw.clone();
+         }
+@@ -51,7 +70,7 @@ fn serialize_section_inner(section: &Section, version: Option<u32>) -> Vec<u8> {
+     super::control::reset_form_order_counter();
+ 
+     let mut records = Vec::new();
+-    let memo_lists = collect_memo_lists(section);
++    let memo_lists = memo_lists_override.map_or_else(|| collect_memo_lists(section), <[_]>::to_vec);
+     let has_memo_tail = !memo_lists.is_empty();
+     let para_count = section.paragraphs.len();
+     // [Issue #1915] IR 계약 폴백: 첫 문단에 Control::SectionDef 가 없는 IR(HWP3 파서
+@@ -118,7 +137,7 @@ fn serialize_section_inner(section: &Section, version: Option<u32>) -> Vec<u8> {
          }
      });
      for (i, para) in section.paragraphs.iter().enumerate() {
@@ -15222,7 +15457,7 @@ index 0e94a0864..f6a2ab941 100644
          let para_ref = if i == 0 {
              first_para_with_secd.as_ref().unwrap_or(para)
          } else {
-@@ -127,7 +127,7 @@ fn serialize_section_inner(section: &Section, version: Option<u32>) -> Vec<u8> {
+@@ -127,7 +146,7 @@ fn serialize_section_inner(section: &Section, version: Option<u32>) -> Vec<u8> {
          serialize_paragraph_with_msb(para_ref, 0, is_last, &mut records);
      }
      if has_memo_tail {
@@ -15231,9 +15466,12 @@ index 0e94a0864..f6a2ab941 100644
      }
      serialize_master_page_tail(section, &mut records);
      // 변경추적 병합 문단 여부(UINT16)는 5.0.3.2부터 존재한다. 재귀로 생성한
-@@ -169,65 +169,39 @@ fn serialize_master_page_tail(section: &Section, records: &mut Vec<Record>) {
+@@ -167,67 +186,41 @@ fn serialize_master_page_tail(section: &Section, records: &mut Vec<Record>) {
+     }
+ }
  
- fn collect_memo_lists(section: &Section) -> Vec<(u32, Vec<Paragraph>)> {
+-fn collect_memo_lists(section: &Section) -> Vec<(u32, Vec<Paragraph>)> {
++pub(crate) fn collect_memo_lists(section: &Section) -> Vec<(u32, Vec<Paragraph>)> {
      let mut memo_lists = Vec::new();
 -    for para in &section.paragraphs {
 +    collect_memo_lists_in(&section.paragraphs, &mut memo_lists);
@@ -15253,7 +15491,7 @@ index 0e94a0864..f6a2ab941 100644
                  {
 -                    memo_lists.push((field.memo_index, field.memo_paragraphs.clone()));
 +                    memo_lists.push((field.memo_number(), field.memo_paragraphs.clone()));
-                 }
++                }
 +                Control::Table(table) => {
 +                    for cell in &table.cells {
 +                        collect_memo_lists_in(&cell.paragraphs, memo_lists);
@@ -15263,7 +15501,7 @@ index 0e94a0864..f6a2ab941 100644
 +                    if let Some(text_box) = shape.drawing().and_then(|d| d.text_box.as_ref()) {
 +                        collect_memo_lists_in(&text_box.paragraphs, memo_lists);
 +                    }
-+                }
+                 }
 +                _ => {}
              }
          }
@@ -15322,7 +15560,78 @@ index 0e94a0864..f6a2ab941 100644
      for (memo_index, paragraphs) in memo_lists {
          records.push(Record {
              tag_id: tags::HWPTAG_MEMO_LIST,
-@@ -1479,6 +1453,9 @@ fn control_char_code_and_id(ctrl: &Control) -> (u16, u32) {
+@@ -312,7 +305,10 @@ fn serialize_paragraph_with_msb(
+     // char_count 를 주장하는 자기모순 레코드가 되거나(종전), #4677 가드로
+     // char_count=1 로 무너져 FIELD_END 슬롯이 영구 소실된다. `serialize_para_text`
+     // 는 begin_ctrl_id 를 아는 마커만 방출하므로 판정도 같은 조건을 쓴다.
+-    let has_emittable_orphan_end = para.orphan_field_ends.iter().any(|o| o.begin_ctrl_id != 0);
++    let has_emittable_orphan_end = para
++        .orphan_field_ends
++        .iter()
++        .any(|o| o.begin_ctrl_id != 0 || o.memo_index != 0);
+     let has_content = !para.text.is_empty()
+         || !para.controls.is_empty()
+         || !para.title_marks.is_empty()
+@@ -493,7 +489,11 @@ fn compute_control_mask(para: &Paragraph) -> u32 {
+     // [#4398] 다단락 필드의 고아 종료 마커 — serialize_para_text 가 방출하는
+     // 조건(begin_ctrl_id 기지)과 동일하게 비트 4 를 세운다. PARA_TEXT 와 mask 는
+     // 항상 함께 움직여야 한다.
+-    if para.orphan_field_ends.iter().any(|o| o.begin_ctrl_id != 0) {
++    if para
++        .orphan_field_ends
++        .iter()
++        .any(|o| o.begin_ctrl_id != 0 || o.memo_index != 0)
++    {
+         mask |= 1u32 << 0x0004;
+     }
+     // TAB (0x0009): text에 탭이 있으면 비트 9 설정
+@@ -813,9 +813,9 @@ fn serialize_para_text(para: &Paragraph) -> ParaTextResult {
+         for ofe in para
+             .orphan_field_ends
+             .iter()
+-            .filter(|o| o.char_idx == i && o.begin_ctrl_id != 0)
++            .filter(|o| o.char_idx == i && (o.begin_ctrl_id != 0 || o.memo_index != 0))
+         {
+-            push_extended_ctrl(&mut code_units, 0x0004, ofe.begin_ctrl_id);
++            push_orphan_field_end(&mut code_units, ofe);
+             prev_end += 8;
+         }
+ 
+@@ -1066,9 +1066,9 @@ fn serialize_para_text(para: &Paragraph) -> ParaTextResult {
+     for ofe in para
+         .orphan_field_ends
+         .iter()
+-        .filter(|o| o.char_idx >= text_chars.len() && o.begin_ctrl_id != 0)
++        .filter(|o| o.char_idx >= text_chars.len() && (o.begin_ctrl_id != 0 || o.memo_index != 0))
+     {
+-        push_extended_ctrl(&mut code_units, 0x0004, ofe.begin_ctrl_id);
++        push_orphan_field_end(&mut code_units, ofe);
+         prev_end += 8;
+     }
+ 
+@@ -1282,6 +1282,21 @@ fn parse_memo_index_from_command(command: &str) -> Option<u32> {
+     command.split('/').nth(2)?.parse().ok()
+ }
+ 
++/// 다단락 필드의 종료 마커. 한컴 메모는 메모 번호를 실은 전용 마커를 쓴다.
++fn push_orphan_field_end(code_units: &mut Vec<u16>, ofe: &crate::model::paragraph::OrphanFieldEnd) {
++    if ofe.memo_index != 0 {
++        push_field_end_ctrl(
++            code_units,
++            FieldEndMarker {
++                ctrl_id: tags::FIELD_MEMO,
++                memo_index: ofe.memo_index,
++            },
++        );
++    } else {
++        push_extended_ctrl(code_units, 0x0004, ofe.begin_ctrl_id);
++    }
++}
++
+ fn push_field_end_ctrl(code_units: &mut Vec<u16>, marker: FieldEndMarker) {
+     if marker.ctrl_id == tags::FIELD_MEMO {
+         // Hancom writes MEMO field end with a distinct 8-code-unit marker:
+@@ -1479,6 +1494,9 @@ fn control_char_code_and_id(ctrl: &Control) -> (u16, u32) {
          // 통째로 버린다(0자·1쪽). `CTRL_CHAR_OVERLAP` 상수는 이름과 달리 'tdut'(덧말)이다.
          Control::Ruby(_) => (0x0017, tags::CTRL_CHAR_OVERLAP),
          Control::CharOverlap(_) => (0x0017, tags::CTRL_TCPS),
@@ -15332,7 +15641,7 @@ index 0e94a0864..f6a2ab941 100644
          Control::Field(f) => (0x0003, f.ctrl_id),
          Control::Equation(_) => (0x000B, tags::CTRL_EQUATION),
          Control::Form(_) => (0x000B, tags::CTRL_FORM),
-@@ -2189,39 +2166,6 @@ mod tests {
+@@ -2189,39 +2207,6 @@ mod tests {
              1,
              "조판 전용 보강 줄은 레코드에서 제외된다"
          );
@@ -15422,7 +15731,7 @@ index f3fd6cf21..48dc48015 100644
          command = xml_escape_attr(&field.command),
          number = xml_escape_attr(number),
 diff --git a/src/serializer/hwpx/section.rs b/src/serializer/hwpx/section.rs
-index 8829aec04..7f7d96857 100644
+index 8829aec04..e6b0d88fc 100644
 --- a/src/serializer/hwpx/section.rs
 +++ b/src/serializer/hwpx/section.rs
 @@ -58,6 +58,25 @@ fn render_sub_list_open(text_direction: Option<&str>) -> String {
@@ -15493,6 +15802,46 @@ index 8829aec04..7f7d96857 100644
                  }
                  out.push_str("</hp:fieldBegin>");
              } else {
+@@ -5572,6 +5581,7 @@ mod tests {
+             begin_id_ref: 1_878_228_493,
+             field_id: 627_272_811,
+             begin_ctrl_id: 0,
++            memo_index: 0,
+         }];
+         let (doc, section) = make_doc_with_paragraph(para);
+         let mut ctx = SerializeContext::collect_from_document(&doc);
+@@ -5646,6 +5656,7 @@ mod tests {
+             begin_id_ref: 42,
+             field_id: 0,
+             begin_ctrl_id: 0,
++            memo_index: 0,
+         }];
+         let (doc, section) = make_doc_with_paragraph(para);
+         let mut ctx = SerializeContext::collect_from_document(&doc);
+@@ -6149,6 +6160,7 @@ mod tests {
+             begin_id_ref: 1_867_945_539,
+             field_id: 0,
+             begin_ctrl_id: crate::parser::tags::FIELD_CLICKHERE,
++            memo_index: 0,
+         }];
+ 
+         let runs = runs_of(&para);
+@@ -6169,6 +6181,7 @@ mod tests {
+             begin_id_ref: 0,
+             field_id: 0,
+             begin_ctrl_id: 0,
++            memo_index: 0,
+         }];
+         let runs = runs_of(&para);
+         assert!(
+@@ -6197,6 +6210,7 @@ mod tests {
+             begin_id_ref: 2_031_845_287,
+             field_id: 0,
+             begin_ctrl_id: crate::parser::tags::FIELD_CLICKHERE,
++            memo_index: 0,
+         }];
+ 
+         let runs = runs_of(&para);
 diff --git a/src/wasm_api/memo.rs b/src/wasm_api/memo.rs
 new file mode 100644
 index 000000000..534b47a6d
@@ -15688,7 +16037,7 @@ index 000000000..c9903d618
 +];
 diff --git a/rhwp-studio/src/ui/memo-dialog.ts b/rhwp-studio/src/ui/memo-dialog.ts
 new file mode 100644
-index 000000000..a901a8b5f
+index 000000000..23d1182d1
 --- /dev/null
 +++ b/rhwp-studio/src/ui/memo-dialog.ts
 @@ -0,0 +1,159 @@
@@ -15806,7 +16155,7 @@ index 000000000..a901a8b5f
 +      group.style.padding = '8px 0';
 +      const head = document.createElement('p');
 +      head.style.margin = '0 0 4px';
-+      const anchor = memo.start === null ? '여러 문단' : `“${memo.anchorText}”`;
++      const anchor = memo.start === null ? `“${memo.anchorText.replace(/\n/g, ' / ')}” (여러 문단)` : `“${memo.anchorText}”`;
 +      head.textContent = `${label} · 대상 ${anchor}${memo.author ? ` · ${memo.author}` : ''}`;
 +      const area = memoTextArea(`${label} 내용`, memo.text);
 +      const error = alertLine();
@@ -15851,3 +16200,242 @@ index 000000000..a901a8b5f
 +    cancel?.remove();
 +  }
 +}
+diff --git a/src/model/paragraph.rs b/src/model/paragraph.rs
+index 601e696c5..9aa0bbc6e 100644
+--- a/src/model/paragraph.rs
++++ b/src/model/paragraph.rs
+@@ -624,6 +624,9 @@ pub struct OrphanFieldEnd {
+     /// 0 이면 모른다는 뜻이고, 그때는 HWP5 저장에서 마커를 내지 않는다 — 필드 종류를
+     /// 지어내면 한글이 짝을 못 맞춘다. HWPX 에서 들어온 고아 마커가 이 경우다.
+     pub begin_ctrl_id: u32,
++    /// 짝이 한컴 메모면 메모 번호, 아니면 0. 한컴 HWP5 메모 종료 마커는 일반 필드와 달리
++    /// 메모 번호를 싣는다(`04 00 65 6d 25 00 .. ff 00 <번호> ..`).
++    pub memo_index: u32,
+ }
+ 
+ impl Paragraph {
+diff --git a/src/parser/hwpx/section.rs b/src/parser/hwpx/section.rs
+index 8b490f6b1..6305058b9 100644
+--- a/src/parser/hwpx/section.rs
++++ b/src/parser/hwpx/section.rs
+@@ -147,10 +147,10 @@ fn link_orphan_field_ends_in_control(control: &mut Control) {
+ /// HWPX fieldEnd는 beginIDRef와 fieldid만 보관하므로, HWP5 PARA_TEXT로 다시 쓸 때 필요한
+ /// field control fourcc는 앞 문단의 fieldBegin에서 찾아야 한다. 짝을 찾지 못한 종료 마커는
+ /// 그대로 남긴다. 임의의 필드 종류를 만들어 내는 것보다 보존 실패를 명시하는 편이 안전하다.
+-fn link_orphan_field_ends(paragraphs: &mut [Paragraph], open_fields: &mut Vec<(u32, u32)>) {
++fn link_orphan_field_ends(paragraphs: &mut [Paragraph], open_fields: &mut Vec<(u32, u32, u32)>) {
+     for para in paragraphs.iter_mut() {
+         for orphan in &mut para.orphan_field_ends {
+-            let Some((field_id, ctrl_id)) = open_fields.last().copied() else {
++            let Some((field_id, ctrl_id, memo_index)) = open_fields.last().copied() else {
+                 continue;
+             };
+ 
+@@ -165,6 +165,7 @@ fn link_orphan_field_ends(paragraphs: &mut [Paragraph], open_fields: &mut Vec<(u
+                 orphan.begin_id_ref = field_id;
+             }
+             orphan.begin_ctrl_id = ctrl_id;
++            orphan.memo_index = memo_index;
+         }
+ 
+         for (control_idx, control) in para.controls.iter().enumerate() {
+@@ -176,7 +177,12 @@ fn link_orphan_field_ends(paragraphs: &mut [Paragraph], open_fields: &mut Vec<(u
+                 .iter()
+                 .any(|range| range.control_idx == control_idx);
+             if !closes_in_this_paragraph && field.field_id != 0 {
+-                open_fields.push((field.field_id, field.ctrl_id));
++                let memo_index = if field.is_hancom_memo() {
++                    field.memo_number()
++                } else {
++                    0
++                };
++                open_fields.push((field.field_id, field.ctrl_id, memo_index));
+             }
+         }
+     }
+@@ -199,7 +205,7 @@ fn link_orphan_field_ends(paragraphs: &mut [Paragraph], open_fields: &mut Vec<(u
+ /// 컨테이너(표 칸·글상자·각주…) 목록은 건드리지 않는다 — 필드는 컨테이너 경계를 넘지
+ /// 못하고, 그 목록들은 이미 자기 스택으로 짝을 지었다.
+ pub fn link_orphan_field_ends_across_sections(sections: &mut [Section]) {
+-    let mut open_fields: Vec<(u32, u32)> = Vec::new();
++    let mut open_fields: Vec<(u32, u32, u32)> = Vec::new();
+     for section in sections.iter_mut() {
+         link_orphan_field_ends(&mut section.paragraphs, &mut open_fields);
+     }
+@@ -992,6 +998,7 @@ fn parse_paragraph_body(
+                         // HWPX `<hp:fieldEnd>` 는 필드 종류를 싣지 않는다 — 짝
+                         // `fieldBegin` 은 다른 문단에 있어 여기서는 알 수 없다.
+                         begin_ctrl_id: 0,
++                        memo_index: 0,
+                     });
+                 }
+             }
+diff --git a/src/parser/body_text/tests.rs b/src/parser/body_text/tests.rs
+index 7e8c05f35..8a219b29d 100644
+--- a/src/parser/body_text/tests.rs
++++ b/src/parser/body_text/tests.rs
+@@ -1011,6 +1011,7 @@ fn orphan_field_end_links_to_the_open_field_id() {
+             begin_id_ref: 0,
+             field_id: 0,
+             begin_ctrl_id: 0,
++            memo_index: 0,
+         }],
+         ..Default::default()
+     };
+@@ -1050,6 +1051,7 @@ fn field_closed_in_its_own_paragraph_is_not_left_open() {
+             begin_id_ref: 0,
+             field_id: 0,
+             begin_ctrl_id: 0,
++            memo_index: 0,
+         }],
+         ..Default::default()
+     };
+@@ -1164,6 +1166,7 @@ fn parse_para_text_reference(data: &[u8]) -> ParaTextParts {
+                         begin_id_ref: 0,
+                         field_id: 0,
+                         begin_ctrl_id: 0,
++                        memo_index: 0,
+                     });
+                 }
+             } else if is_extended_only_ctrl_char(ch) {
+diff --git a/rhwp-studio/tests/mutation-routing-guard.test.ts b/rhwp-studio/tests/mutation-routing-guard.test.ts
+index cef1f4e3a..bba591ce2 100644
+--- a/rhwp-studio/tests/mutation-routing-guard.test.ts
++++ b/rhwp-studio/tests/mutation-routing-guard.test.ts
+@@ -56,7 +56,7 @@ function bridgePublicMethods(): string[] {
+ // 문서 변경을 시사하는 동사 접두어. MUTATING_METHODS 의 모든 이름을 커버해야
+ // 하며(아래 자기정합 단언이 강제), 그래야 새 브리지 뮤테이터가 drift 에 걸린다.
+ // find* 는 쿼리(findNextEditableControl 등)가 많아 findOrCreate 로 좁힌다.
+-const MUTATING_VERB = /^(insert|delete|create|apply|add|remove|move|resize|merge|split|update|toggle|replace|paste|assign|group|ungroup|change|clear|evaluate|transpose|promote|ensure|findOrCreate|reflow|setPage|setSection|setColumn|setCell|setTable|setPicture|setShape|setEquation|setNote|setChar|setPara|setField|setForm|setNumbering|setHeaderFooter|setActiveField|renameBookmark)/;
++const MUTATING_VERB = /^(insert|delete|create|apply|add|remove|move|resize|merge|split|update|toggle|replace|paste|assign|group|ungroup|change|clear|evaluate|transpose|promote|ensure|findOrCreate|reflow|setPage|setSection|setColumn|setCell|setTable|setPicture|setShape|setEquation|setNote|setChar|setPara|setField|setForm|setNumbering|setHeaderFooter|setActiveField|setMemo|renameBookmark)/;
+ 
+ test('MUTATING_VERB 는 MUTATING_METHODS 전 항목을 커버한다(drift 사각 방지)', () => {
+   // 목록에 있으나 동사 패턴에 안 걸리는 이름이 있으면, 그 계열의 신규 브리지
+@@ -238,6 +238,7 @@ function mutatorCallCount(src: string): number {
+ // 뮤테이션 표면 원장 (2026-07-17 동결). 이관/추가 시 이 표를 의식적으로 갱신한다.
+ // 값을 낮추는 방향(이관)만 무해하며, 높이거나 신규 키 추가는 리뷰 대상이다.
+ const BASELINE: Readonly<Record<string, number>> = {
++  'src/command/commands/memo.ts': 3, // (local editor) 메모 넣기·고치기·지우기 — 모두 executeOperation snapshot 안
+   'src/command/commands/hyperlink.ts': 7, // #6963: 삽입·주소/표시 문자열 수정·해제 및 본문/셀 글자 삽입 모두 executeOperation snapshot 내부
+   'src/command/commands/edit.ts': 1,
+   'src/command/commands/format.ts': 1,
+@@ -251,7 +252,7 @@ const BASELINE: Readonly<Record<string, number>> = {
+   'src/ui/endnote-shape-dialog.ts': 1,
+   'src/ui/equation-editor-dialog.ts': 2,
+   'src/ui/equation-props-dialog.ts': 2,
+-  'src/ui/find-dialog.ts': 4,
++  'src/ui/find-dialog.ts': 6, // +2 (local editor): 중첩 셀 치환 deleteRangeInCellByPath·insertTextInCellByPath 는 applyReplace 안 — executeOperation snapshot 으로 라우팅
+   'src/ui/formula-dialog.ts': 4, // +1: [#2367] 쉼표 포맷이 원시 결과 위에 겹치지 않도록 deleteTextInCell 추가(commit() snapshot 내부 — 라우팅 유지)
+   'src/ui/new-number-dialog.ts': 1,
+   'src/ui/numbering-dialog.ts': 1,
+@@ -261,15 +262,15 @@ const BASELINE: Readonly<Record<string, number>> = {
+   'src/ui/section-settings-dialog.ts': 2,
+   'src/ui/style-dialog.ts': 2, // +1: [#3387] 삭제를 snapshot 으로 라우팅하며 services 미주입 fallback 분기 추가(원장은 표면 수만 세므로 라우팅해도 줄지 않는다)
+   'src/ui/style-edit-dialog.ts': 6,
+-  'src/ui/table-cell-props-dialog.ts': 2,
++  'src/ui/table-cell-props-dialog.ts': 6, // +4 (local editor): 표 너비 resizeTableCells·resizeTableCellsByPath 와 중첩 표 setCellPropertiesByPath·setTablePropertiesByPath 는 applyProps 안 — executeOperation snapshot 으로 라우팅
+   'src/ui/toolbar.ts': 4,
+   // engine/input-handler* — 드래그/nudge 등 직접-뮤테이션 최고밀도 영역.
+-  'src/engine/input-handler.ts': 35, // +1: 누름틀 제거 이관 시 removeFieldAt 이 양식모드(직접 유지)/일반모드(snapshot) 두 분기로 분리 / +1: Edit 오버레이 커밋이 셀 내부는 setFormValueInCell 로 분기(CheckBox 와 동일 조건 — 기존 flat 호출은 표 컨트롤 슬롯을 가리켜 실패) / +1: 셀 블록 글자 서식이 applyCharFormatInCell 을 executeOperation snapshot 안에서 호출(여러 셀에 걸친 글자 서식 커맨드 부재) / +1: 중첩 셀 블록 글자 서식도 applyCharFormatInCellByPath 를 같은 snapshot 안에서 호출 / +2: 머리말·꼬리말(applyParaFormatInHf)과 각주(applyParaFormatInFootnote) 문단 서식 배선 — 둘 다 snapshot 라우팅 / +2: #4121 HF 범위 치환·부분 글자 서식을 SubmodeSelectionSnapshotCommand 안에서 원자 기록 / +2: #6741 셀 블록 내용 지우기가 deleteRangeInCell·deleteRangeInCellByPath 를 executeOperation snapshot 안에서 호출(선택 칸 전체를 한 엔트리로)
++  'src/engine/input-handler.ts': 36, // +1 (local editor): 중첩 표 지우기 deleteCellTableControlByPath 는 executeOperation snapshot 안 / +1: 누름틀 제거 이관 시 removeFieldAt 이 양식모드(직접 유지)/일반모드(snapshot) 두 분기로 분리 / +1: Edit 오버레이 커밋이 셀 내부는 setFormValueInCell 로 분기(CheckBox 와 동일 조건 — 기존 flat 호출은 표 컨트롤 슬롯을 가리켜 실패) / +1: 셀 블록 글자 서식이 applyCharFormatInCell 을 executeOperation snapshot 안에서 호출(여러 셀에 걸친 글자 서식 커맨드 부재) / +1: 중첩 셀 블록 글자 서식도 applyCharFormatInCellByPath 를 같은 snapshot 안에서 호출 / +2: 머리말·꼬리말(applyParaFormatInHf)과 각주(applyParaFormatInFootnote) 문단 서식 배선 — 둘 다 snapshot 라우팅 / +2: #4121 HF 범위 치환·부분 글자 서식을 SubmodeSelectionSnapshotCommand 안에서 원자 기록 / +2: #6741 셀 블록 내용 지우기가 deleteRangeInCell·deleteRangeInCellByPath 를 executeOperation snapshot 안에서 호출(선택 칸 전체를 한 엔트리로)
+   'src/engine/input-handler-connector.ts': 1,
+   'src/engine/input-handler-keyboard.ts': 21,
+   'src/engine/input-handler-mouse.ts': 3,
+   'src/engine/input-handler-picture.ts': 11,
+-  'src/engine/input-handler-table.ts': 10, // +1 [#7189]: 중첩 표 확정이 resizeTableCellsByPath 로 갈라진다 (같은 executeOperation snapshot 안, 평면 호출과 배타) / -2: 한컴 3모드 셀 크기 조절의 직접 WASM 호출을 executeOperation snapshot 경로로 이관 (undo 기록됨) / +2 [#7442]: applyKeyboardResize·resizeTableProportional 도 중첩 ctx 에서 resizeTableCellsByPath 로 갈라진다 (같은 snapshot 안, 평면 호출과 배타)
++  'src/engine/input-handler-table.ts': 12, // +2 (local editor): 중첩 표 이동 moveTableOffsetByPath — 화살표는 snapshot, 끌기는 record 계약 안 / +1 [#7189]: 중첩 표 확정이 resizeTableCellsByPath 로 갈라진다 (같은 executeOperation snapshot 안, 평면 호출과 배타) / -2: 한컴 3모드 셀 크기 조절의 직접 WASM 호출을 executeOperation snapshot 경로로 이관 (undo 기록됨) / +2 [#7442]: applyKeyboardResize·resizeTableProportional 도 중첩 ctx 에서 resizeTableCellsByPath 로 갈라진다 (같은 snapshot 안, 평면 호출과 배타)
+   'src/engine/input-handler-hyperlink-delete.ts': 3, // #6963: removeHyperlink + 본문/셀 deleteText는 모두 deleteHyperlink snapshot 안에서 실행. 실제 WASM runner가 원자 복구·undo/redo를 검증한다.
+   'src/engine/input-handler-text.ts': 11, // #2424: raw IME delete를 command 공통 typed helper로 이관
+   // ── hwpctl — 의도적 미라우팅 (#3648 정책 판정, 2026-07-31) ──
+diff --git a/src/serializer/cfb_writer.rs b/src/serializer/cfb_writer.rs
+index 721a6ce47..217656979 100644
+--- a/src/serializer/cfb_writer.rs
++++ b/src/serializer/cfb_writer.rs
+@@ -15,7 +15,7 @@ use crate::model::bin_data::{BinData, BinDataType, MAX_BIN_DATA_BYTES};
+ use crate::model::document::{Document, Preview};
+ use crate::password_crypto::{encrypt_hwp5_stream, HWP5_ENCRYPT_VERSION};
+ 
+-use super::body_text::serialize_section_for_version;
++use super::body_text::serialize_section_with_memo_lists;
+ use super::content_loss::{
+     ContentLoss, ContentLossReason, ContentLossReport, SerializedDocument, SerializedFormat,
+ };
+@@ -124,7 +124,27 @@ fn serialize_hwp_inner(
+     let split_multi_sec_pr = doc.layout_profile().hwpx_stored_layout();
+     let mut section_bytes_list = Vec::new();
+     let mut form_id_allocator = None;
+-    for section in &doc.sections {
++    // 한글은 메모 본문을 마지막 구역 끝에서만 읽는다 — 전체 목록을 마지막 구역에 모은다.
++    let memo_by_section: Vec<_> = doc
++        .sections
++        .iter()
++        .map(super::body_text::collect_memo_lists)
++        .collect();
++    let all_memo_lists = memo_by_section.concat();
++    let last_section = doc.sections.len().saturating_sub(1);
++    let memos_outside_last = memo_by_section[..last_section]
++        .iter()
++        .any(|lists| !lists.is_empty());
++    for (section_idx, section) in doc.sections.iter().enumerate() {
++        let is_last = section_idx == last_section;
++        let memo_lists: &[_] = if is_last { &all_memo_lists } else { &[] };
++        // 원본 스트림의 메모 꼬리는 그 구역의 메모만 담으므로, 다른 구역의 메모가 있으면
++        // 마지막 구역을, 메모가 있는 앞 구역은 꼬리를 빼도록 모델에서 다시 쓴다.
++        let allow_raw = if is_last {
++            !memos_outside_last
++        } else {
++            memo_by_section[section_idx].is_empty()
++        };
+         let split_starts: Vec<usize> =
+             if !split_multi_sec_pr || section.raw_provenance_permits_reuse() {
+                 Vec::new()
+@@ -145,7 +165,12 @@ fn serialize_hwp_inner(
+         if split_starts.is_empty() {
+             let prepared =
+                 super::form_identity::prepare_section(section, doc, &mut form_id_allocator)?;
+-            section_bytes_list.push(serialize_section_for_version(&prepared, output_version));
++            section_bytes_list.push(serialize_section_with_memo_lists(
++                &prepared,
++                output_version,
++                memo_lists,
++                allow_raw,
++            ));
+             continue;
+         }
+         let mut starts = Vec::with_capacity(split_starts.len() + 1);
+@@ -174,7 +199,13 @@ fn serialize_hwp_inner(
+             };
+             let prepared =
+                 super::form_identity::prepare_section(&sub, doc, &mut form_id_allocator)?;
+-            section_bytes_list.push(serialize_section_for_version(&prepared, output_version));
++            let last_part = k + 1 == starts.len();
++            section_bytes_list.push(serialize_section_with_memo_lists(
++                &prepared,
++                output_version,
++                if last_part { memo_lists } else { &[] },
++                false,
++            ));
+         }
+     }
+ 
+diff --git a/src/serializer/control.rs b/src/serializer/control.rs
+index 4bef1ca2f..19c3673f4 100644
+--- a/src/serializer/control.rs
++++ b/src/serializer/control.rs
+@@ -2152,7 +2152,15 @@ fn serialize_text_box_if_present(drawing: &DrawingObjAttr, level: u16, records:
+         let mut w = ByteWriter::new();
+         // para_count: 스펙은 INT16이지만 실제 HWP 파일에서는 UINT32로 저장됨
+         w.write_u32(text_box.paragraphs.len() as u32).unwrap();
+-        w.write_u32(text_box.list_attr).unwrap();
++        // 세로 정렬은 편집 명령이 `vertical_align` 만 바꾸므로 bit 5~6 을 그 값으로 다시 쓴다.
++        // 원본 bit 를 그대로 쓰면 편집기와 HWPX 에서 바꾼 세로 정렬이 HWP 에서만 사라진다.
++        let vertical_bits: u32 = match text_box.vertical_align {
++            crate::model::table::VerticalAlign::Top => 0,
++            crate::model::table::VerticalAlign::Center => 1,
++            crate::model::table::VerticalAlign::Bottom => 2,
++        };
++        w.write_u32((text_box.list_attr & !(0b11 << 5)) | (vertical_bits << 5))
++            .unwrap();
+         // 여백 + 최대 폭 (글상자 고유 데이터)
+         w.write_i16(text_box.margin_left).unwrap();
+         w.write_i16(text_box.margin_right).unwrap();

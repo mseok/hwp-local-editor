@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {initSync, HwpDocument} from '../.build/core/rhwp.js';
 import {hwpRecords} from './ole-fixture.mjs';
-import {unzip} from './zip-fixture.mjs';
+import {unzip, zip} from './zip-fixture.mjs';
 
 initSync({module: await readFile('.build/core/rhwp_bg.wasm')});
 const blank = await readFile('.cache/rhwp/saved/blank2010.hwp');
@@ -146,10 +146,15 @@ function memoLayout(bytes) {
       if (command.startsWith('MEMO/')) headers.push({id: Buffer.from(r.body.subarray(0, 4)).reverse().toString('latin1'), props: r.body.readUInt32LE(4), command});
     }
   }
+  const ends = [];
+  for (const r of records) if (r.tag === 67) for (let k = 0; k + 16 <= r.body.length; k += 2) {
+    const u = j => r.body.readUInt16LE(k + 2 * j);
+    if (u(0) === 4 && u(7) === 4 && u(1) === 0x6d65 && u(2) === 0x0025) {ends.push([u(1), u(2), u(4), u(5), u(6)].map(x => x.toString(16)).join(' ')); k += 14;}
+  }
   const firstList = records.findIndex(r => r.tag === HWPTAG_MEMO_LIST);
   const owner = records.slice(0, firstList).findLastIndex(r => r.tag === 66 && r.level === 0);
   const bodyParagraphs = records.filter((r, i) => r.tag === 66 && r.level === 0).length;
-  return {markers, headers, ownerIsLastParagraph: owner === records.findLastIndex(r => r.tag === 66 && r.level === 0), bodyParagraphs};
+  return {markers, ends, headers, lists: records.filter(r => r.tag === HWPTAG_MEMO_LIST).length, ownerIsLastParagraph: owner === records.findLastIndex(r => r.tag === 66 && r.level === 0), bodyParagraphs};
 }
 
 test('saved HWP memos use the Hancom layout, also after the file is read back and saved again', () => {
@@ -183,6 +188,7 @@ test('a Hancom-made HWP memo keeps its body, author and layout through an edit a
     assert.equal(d.setMemoText(1, '수정 확인'), true);
     const saved = d.exportHwp(), layout = memoLayout(saved);
     assert.deepEqual(layout.markers, original.markers);
+    assert.deepEqual(layout.ends, original.ends, 'the multi-paragraph memo keeps the Hancom memo end marker');
     assert.deepEqual(layout.headers, original.headers);
     assert.equal(layout.ownerIsLastParagraph, true);
     const r = reopen(saved);
@@ -191,4 +197,77 @@ test('a Hancom-made HWP memo keeps its body, author and layout through an edit a
       assert.equal(r.getParagraphCount(0), paragraphs);
     } finally {r.free();}
   } finally {d.free();}
+});
+
+const hancomSample = async () => {
+  const {execFileSync} = await import('node:child_process');
+  return execFileSync('git', ['-C', '.cache/rhwp', 'show', 'HEAD:samples/issue5866/memo_field_hwp5.hwp'], {maxBuffer: 1 << 26});
+};
+
+test('a memo spanning paragraphs is listed with its anchor and can be deleted without touching the text', async () => {
+  const d = reopen(await hancomSample());
+  try {
+    const [memo] = JSON.parse(d.getMemos());
+    assert.equal(memo.start, null);
+    assert.ok(memo.anchorText.includes('\n') && memo.anchorText.length > 20, 'anchor text spans paragraphs');
+    const text = d.getTextFileUnicode(true), paragraphs = d.getParagraphCount(0);
+    assert.equal(d.deleteMemo(1), true);
+    assert.deepEqual(JSON.parse(d.getMemos()), []);
+    assert.equal(d.getTextFileUnicode(true), text);
+    const saved = d.exportHwp(), layout = memoLayout(saved);
+    assert.deepEqual([layout.markers, layout.ends, layout.headers, layout.lists], [[], [], [], 0]);
+    for (const bytes of [saved, d.exportHwpx()]) {
+      const r = reopen(bytes);
+      try {
+        assert.deepEqual(JSON.parse(r.getMemos()), []);
+        assert.equal(r.getTextFileUnicode(true), text);
+        assert.equal(r.getParagraphCount(0), paragraphs);
+      } finally {r.free();}
+    }
+  } finally {d.free();}
+});
+
+test('memos inside a text box are listed, saved and read back in both formats', () => {
+  const d = new HwpDocument(blank);
+  try {
+    d.createBlankDocument(); d.insertText(0, 0, 0, 'HOST'); d.splitParagraph(0, 0, 4);
+    d.createShapeControl(JSON.stringify({sectionIdx: 0, paraIdx: 1, charOffset: 0, width: 30000, height: 10000, treatAsChar: true, shapeType: 'textbox', horzOffset: 0, vertOffset: 0}));
+    d.insertTextInCell(0, 1, 0, 0, 0, 0, 'BOX 글상자');
+    const box = {section: 0, para: 1, cellPath: [[0, 0, 0]]};
+    assert.equal(insert(d, box, 0, 3, '글상자 메모'), 1);
+    const expected = [{number: 1, target: box, start: 0, end: 3, anchorText: 'BOX', text: '글상자 메모'}];
+    assert.deepEqual(memos(d), expected);
+    for (const bytes of [d.exportHwp(), d.exportHwpx()]) {
+      const r = reopen(bytes);
+      try {assert.deepEqual(memos(r), expected);} finally {r.free();}
+    }
+    assert.deepEqual(memoLayout(d.exportHwp()).markers, ['%%me']);
+  } finally {d.free();}
+});
+
+test('memos in two sections keep their bodies in HWP and HWPX', () => {
+  const base = new HwpDocument(blank);
+  let two;
+  try {
+    base.createBlankDocument(); base.insertText(0, 0, 0, 'SECTION-ONE text');
+    const entries = unzip(Buffer.from(base.exportHwpx()));
+    const hpf = entries.get('Contents/content.hpf').toString(), header = entries.get('Contents/header.xml').toString(), s0 = entries.get('Contents/section0.xml').toString();
+    entries.set('Contents/section1.xml', Buffer.from(s0.replace(/SECTION-ONE/g, 'SECTION-TWO')));
+    entries.set('Contents/content.hpf', Buffer.from(hpf.replace(/(<opf:item\b[^>]*id="section0"[^>]*\/>)/, '$1<opf:item id="section1" href="Contents/section1.xml" media-type="application/xml" isEmbeded="0"/>').replace(/(<opf:itemref\b[^>]*idref="section0"[^>]*\/>)/, '$1<opf:itemref idref="section1" linear="yes"/>')));
+    entries.set('Contents/header.xml', Buffer.from(header.replace(/secCnt="\d+"/, 'secCnt="2"')));
+    two = new HwpDocument(zip(entries));
+    assert.equal(insert(two, {section: 0, para: 0, cellPath: []}, 0, 11, '첫 구역 메모'), 1);
+    assert.equal(insert(two, {section: 1, para: 0, cellPath: []}, 0, 11, '둘째 구역 메모'), 2);
+    const expected = memos(two);
+    assert.deepEqual(expected.map(m => [m.target.section, m.anchorText, m.text]), [[0, 'SECTION-ONE', '첫 구역 메모'], [1, 'SECTION-TWO', '둘째 구역 메모']]);
+    for (const bytes of [two.exportHwp(), two.exportHwpx()]) {
+      const r = reopen(bytes);
+      try {assert.deepEqual(memos(r), expected);} finally {r.free();}
+    }
+    // Hancom reads memo bodies only from the end of the last section; a list left in section 0 showed an empty memo.
+    const hwp = Buffer.from(two.exportHwp()), lists = name => hwpRecords(hwp, name).filter(x => x.tag === HWPTAG_MEMO_LIST).map(x => x.body.readUInt32LE(0));
+    assert.deepEqual([lists('BodyText/Section0'), lists('BodyText/Section1')], [[], [1, 2]]);
+    const r = reopen(two.exportHwp());
+    try {r.setMemoText(2, '둘째 구역 고친 메모'); const again = reopen(r.exportHwp()); try {assert.deepEqual(memos(again).map(m => m.text), ['첫 구역 메모', '둘째 구역 고친 메모']);} finally {again.free();}} finally {r.free();}
+  } finally {base.free(); two?.free();}
 });

@@ -31,6 +31,20 @@ const files = [];
     }
   } finally {d.free();}
 }
+{
+  const d = new HwpDocument(blank);
+  try {
+    d.createBlankDocument(); d.insertText(0, 0, 0, 'LINK-TARGET plain');
+    const file = path.join(root, 'link.hwp'); await writeFile(file, d.exportHwp()); files.push(file);
+  } finally {d.free();}
+}
+{
+  // Hancom's own memo file (upstream sample): its memo spans paragraphs.
+  const {execFileSync} = await import('node:child_process');
+  const file = path.join(root, 'memo-hancom.hwp');
+  await writeFile(file, execFileSync('git', ['-C', '.cache/rhwp', 'show', 'HEAD:samples/issue5866/memo_field_hwp5.hwp'], {maxBuffer: 1 << 26}));
+  files.push(file);
+}
 const data = await createWorkspace(files, path.join(root, 'output')), manifest = path.join(root, 'workspace.json');
 await writeFile(manifest, json(data));
 const port = 18874, base = 'http://127.0.0.1:' + port;
@@ -62,7 +76,51 @@ try {
   browser = await chromium.launch({headless: true, executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH || undefined});
   const context = await browser.newContext({viewport: {width: 1280, height: 1050}});
   context.on('page', page => {page.on('pageerror', error => report.errors.push(error.message)); page.on('console', message => {if (['warning', 'error'].includes(message.type())) report.warnings.push(message.text());}); page.on('request', request => {if (!request.url().startsWith(base)) report.externalRequests.push(request.url());});});
-  for (const entry of data.documents) {
+  const recovered = page => page.waitForFunction(() => {const revision = localStudio.element.contentWindow.rhwpStudio.localRecovery.read(Number.MAX_SAFE_INTEGER).revision; return revision > 0 && revision === Number(document.querySelector('#status').dataset.savedRevision);});
+  for (const entry of data.documents.filter(e => e.name === 'link.hwp')) {
+    const page = await context.newPage(), frame = page.frameLocator('#editor iframe');
+    try {
+      await page.goto(base + '/editor?id=' + entry.id); await ready(page);
+      await select(page, frame, 'LINK-TARGET');
+      await menu(frame, '입력', '하이퍼링크');
+      const dialog = frame.getByRole('dialog', {name: '하이퍼링크', exact: true});
+      await dialog.getByRole('textbox', {name: '웹 주소', exact: true}).fill('https://example.com/memo-check');
+      await dialog.getByRole('button', {name: '넣기', exact: true}).click();
+      await recovered(page);
+      await page.reload(); await ready(page);
+      await save(page, 1);
+      const saved = new HwpDocument(await readFile(entry.output));
+      try {
+        const links = JSON.parse(saved.getHyperlinkContext(json({section: 0, para: 0, cellPath: []}))).links;
+        assert.deepEqual(links.map(l => [l.text, l.uri]), [['LINK-TARGET', 'https://example.com/memo-check']]);
+      } finally {saved.free();}
+      pass('link.hwp a hyperlink inserted before a reload is restored by journal recovery and saved');
+    } finally {await page.close();}
+  }
+  for (const entry of data.documents.filter(e => e.name === 'memo-hancom.hwp')) {
+    const source = new HwpDocument(await readFile(entry.source)), page = await context.newPage(), frame = page.frameLocator('#editor iframe');
+    try {
+      await page.goto(base + '/editor?id=' + entry.id); await ready(page);
+      await openList(frame);
+      const head = await frame.getByRole('group', {name: '메모 1', exact: true}).locator('p').first().textContent();
+      assert.ok(head.includes('(여러 문단)'), head);
+      assert.equal(await frame.getByRole('textbox', {name: '메모 1 내용', exact: true}).inputValue(), '수정');
+      await frame.getByRole('button', {name: '메모 1 지우기', exact: true}).click();
+      await frame.getByText('메모가 없습니다.', {exact: true}).waitFor();
+      await closeList(frame);
+      await save(page, 1);
+      const saved = new HwpDocument(await readFile(entry.output));
+      try {
+        assert.deepEqual(JSON.parse(saved.getMemos()), []);
+        assert.equal(saved.getTextFileUnicode(true), source.getTextFileUnicode(true));
+        assert.equal(saved.getParagraphCount(0), source.getParagraphCount(0));
+      } finally {saved.free();}
+      assert.equal(digest(await readFile(entry.source)), entry.sourceSha256);
+      assert.equal(JSON.parse(await readFile(entry.output + '.receipt.json')).contentLoss.count, 0);
+      pass('memo-hancom.hwp a Hancom memo spanning paragraphs is deleted from the list and the text stays');
+    } finally {source.free(); await page.close();}
+  }
+  for (const entry of data.documents.filter(e => e.name.startsWith('memo.'))) {
     const source = new HwpDocument(await readFile(entry.source)), page = await context.newPage(), frame = page.frameLocator('#editor iframe');
     const text = doc => doc.getTextFileUnicode(true);
     const check = async expected => {
@@ -108,7 +166,7 @@ try {
       await save(page, 4); await check([{...one, text: '고친 메모\n두 줄'}, {...two, text: '둘째 메모'}, three, four]);
       await menu(frame, '편집', '다시 실행');
       await save(page, 5); await check([{...one, text: '고친 메모\n두 줄'}, three, four]);
-      await page.waitForFunction(() => {const revision = localStudio.element.contentWindow.rhwpStudio.localRecovery.read(Number.MAX_SAFE_INTEGER).revision; return revision > 0 && revision === Number(document.querySelector('#status').dataset.savedRevision);});
+      await recovered(page);
       await page.reload(); await ready(page);
       await save(page, 6); await check([{...one, text: '고친 메모\n두 줄'}, three, four]);
       pass(entry.name + ' memo deletion undo, redo and journal recovery keep the expected memos');
