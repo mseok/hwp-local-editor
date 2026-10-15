@@ -1,5 +1,5 @@
 // Memo (Hancom 메모/주석) viewing, editing, insertion, deletion, undo/redo, journal recovery and saved reopening
-// through the Studio memo list and 입력 → 메모 넣기, in HWP and HWPX.
+// through the Studio memo list and 입력 → 메모 넣기, in HWP and HWPX, including paragraphs with objects.
 import {createRequire} from 'node:module';
 import {readFile, writeFile, mkdir, mkdtemp} from 'node:fs/promises';
 import {spawn} from 'node:child_process';
@@ -36,6 +36,23 @@ const files = [];
   try {
     d.createBlankDocument(); d.insertText(0, 0, 0, 'LINK-TARGET plain');
     const file = path.join(root, 'link.hwp'); await writeFile(file, d.exportHwp()); files.push(file);
+  } finally {d.free();}
+}
+{
+  // A paragraph with a footnote, an equation, an inline table and a trailing footnote between the letters.
+  const d = new HwpDocument(blank);
+  try {
+    d.createBlankDocument();
+    d.insertText(0, 0, 0, '개체 문단'); d.splitParagraph(0, 0, 5);
+    d.insertText(0, 1, 0, 'AAA-FOOT BBB-EQ CCC-TBL DDD-TAIL');
+    d.insertFootnote(0, 1, 8);
+    d.insertEquation(0, 1, 15, 'x+y', 1000, 0);
+    d.createTableEx(json({sectionIdx: 0, paraIdx: 1, charOffset: 19, rowCount: 1, colCount: 1, treatAsChar: true}));
+    d.insertFootnote(0, 1, d.getParagraphLength(0, 1));
+    for (const format of ['hwp', 'hwpx']) {
+      const file = path.join(root, 'objects.' + format);
+      await writeFile(file, format === 'hwp' ? d.exportHwp() : d.exportHwpx()); files.push(file);
+    }
   } finally {d.free();}
 }
 {
@@ -96,6 +113,41 @@ try {
       } finally {saved.free();}
       pass('link.hwp a hyperlink inserted before a reload is restored by journal recovery and saved');
     } finally {await page.close();}
+  }
+  for (const entry of data.documents.filter(e => e.name.startsWith('objects.'))) {
+    const source = new HwpDocument(await readFile(entry.source)), page = await context.newPage(), frame = page.frameLocator('#editor iframe');
+    try {
+      assert.equal(source.getControlTextPositions(0, 1), '[8,15,19,32]');
+      await page.goto(base + '/editor?id=' + entry.id); await ready(page);
+      for (const [anchor, body] of [['AAA-FOOT', '각주 바로 앞'], ['CCC-TBL', '표를 감쌈'], ['DDD-TAIL', '문단 끝']]) {
+        await select(page, frame, anchor);
+        await menu(frame, '입력', '메모 넣기');
+        await frame.getByRole('textbox', {name: '메모 내용', exact: true}).fill(body);
+        await frame.getByRole('dialog', {name: '메모 넣기', exact: true}).getByRole('button', {name: '넣기', exact: true}).click();
+      }
+      await save(page, 1);
+      const saved = new HwpDocument(await readFile(entry.output));
+      try {
+        assert.deepEqual(memoState(saved).map(m => [m.anchorText, m.start, m.end, m.text]), [['AAA-FOOT', 0, 8, '각주 바로 앞'], ['CCC-TBL', 16, 23, '표를 감쌈'], ['DDD-TAIL', 24, 32, '문단 끝']]);
+        assert.equal(saved.getTextFileUnicode(true), source.getTextFileUnicode(true));
+        // Memo starts at 0, 16 and 24; the footnotes, equation and table keep their places.
+        assert.equal(saved.getControlTextPositions(0, 1), '[0,8,15,16,19,24,32]');
+      } finally {saved.free();}
+      pass(entry.name + ' memos added next to and over a footnote, an equation and an inline table anchor the selected text');
+      await openList(frame);
+      for (const n of [1, 2, 3]) await frame.getByRole('button', {name: `메모 ${n} 지우기`, exact: true}).click();
+      await frame.getByText('메모가 없습니다.', {exact: true}).waitFor();
+      await closeList(frame);
+      await save(page, 2);
+      const cleared = new HwpDocument(await readFile(entry.output));
+      try {
+        assert.deepEqual(JSON.parse(cleared.getMemos()), []);
+        assert.equal(cleared.getControlTextPositions(0, 1), '[8,15,19,32]');
+        assert.equal(cleared.getTextFileUnicode(true), source.getTextFileUnicode(true));
+      } finally {cleared.free();}
+      assert.equal(digest(await readFile(entry.source)), entry.sourceSha256);
+      pass(entry.name + ' deleting those memos leaves the objects and text as they were');
+    } finally {source.free(); await page.close();}
   }
   for (const entry of data.documents.filter(e => e.name === 'memo-hancom.hwp')) {
     const source = new HwpDocument(await readFile(entry.source)), page = await context.newPage(), frame = page.frameLocator('#editor iframe');

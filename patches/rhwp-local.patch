@@ -14457,7 +14457,7 @@ index 9d327c4bd..29881cdf5 100644
                      x: (width / 2) as i32,
                      y: (height / 2) as i32,
 diff --git a/src/document_core/hyperlink.rs b/src/document_core/hyperlink.rs
-index 4d5467799..8e8b99e22 100644
+index 4d5467799..2ad83de53 100644
 --- a/src/document_core/hyperlink.rs
 +++ b/src/document_core/hyperlink.rs
 @@ -371,7 +371,7 @@ impl DocumentCore {
@@ -14469,7 +14469,7 @@ index 4d5467799..8e8b99e22 100644
          &self,
          target: &HyperlinkTarget,
      ) -> Result<(&[Paragraph], usize), HwpError> {
-@@ -407,7 +407,10 @@ impl DocumentCore {
+@@ -407,7 +407,20 @@ impl DocumentCore {
          Ok((paragraphs, para_idx))
      }
  
@@ -14478,10 +14478,64 @@ index 4d5467799..8e8b99e22 100644
 +        &self,
 +        target: &HyperlinkTarget,
 +    ) -> Result<(), HwpError> {
++        self.validate_field_paragraph(target, false)
++    }
++
++    /// `objects_ok` 는 메모 전용이다: 표·그림·각주 같은 개체 칸과 개체를 감싼 메모를 허용한다.
++    /// 그 경우 호출자가 고친 문단을 `para_text_round_trips` 로 다시 확인한다.
++    pub(crate) fn validate_field_paragraph(
++        &self,
++        target: &HyperlinkTarget,
++        objects_ok: bool,
++    ) -> Result<(), HwpError> {
          let p = self.hyperlink_paragraph(target)?;
          if p.field_ranges.iter().any(|r| {
              r.start_char_idx > r.end_char_idx
-@@ -462,6 +465,22 @@ impl DocumentCore {
+@@ -421,18 +434,22 @@ impl DocumentCore {
+             || !p.title_marks.is_empty()
+             || p.controls.iter().enumerate().any(|(idx, c)| match c {
+                 Control::SectionDef(_) | Control::ColumnDef(_) => false,
+-                Control::Field(_) => !p.field_ranges.iter().any(|r| {
++                Control::Field(f) => !p.field_ranges.iter().any(|r| {
+                     r.control_idx == idx
+                         && r.start_char_idx <= r.end_char_idx
+-                        && r.inner_slot_count == 0
++                        && (r.inner_slot_count == 0 || objects_ok && f.is_hancom_memo())
+                 }),
+-                _ => true,
++                // 본문 칸을 차지하지 않거나 종류를 모르는 컨트롤은 위치를 맞출 수 없다.
++                Control::Hyperlink(_) | Control::Unknown(_) => true,
++                _ => !objects_ok,
+             })
+             || p.char_offsets.len() != p.text.chars().count()
+         {
+-            return Err(invalid(
+-                "개체·다단락 필드·HWP3 문단의 링크 편집은 아직 지원하지 않습니다",
+-            ));
++            return Err(invalid(if objects_ok {
++                "다단락 필드·차례 표시·HWP3 문단에는 아직 메모를 달 수 없습니다"
++            } else {
++                "개체·다단락 필드·HWP3 문단의 링크 편집은 아직 지원하지 않습니다"
++            }));
+         }
+         // 앞 문단에서 열린 다단락 필드의 중간 문단도 편집 대상에서 제외한다.
+         let mut open = std::collections::HashSet::new();
+@@ -450,9 +467,11 @@ impl DocumentCore {
+             }
+         }
+         if !open.is_empty() {
+-            return Err(invalid(
+-                "다단락 필드 안의 링크 편집은 아직 지원하지 않습니다",
+-            ));
++            return Err(invalid(if objects_ok {
++                "다단락 필드 안에는 아직 메모를 달 수 없습니다"
++            } else {
++                "다단락 필드 안의 링크 편집은 아직 지원하지 않습니다"
++            }));
+         }
+         Ok(())
+     }
+@@ -462,6 +481,22 @@ impl DocumentCore {
          target: &HyperlinkTarget,
          candidate: Paragraph,
          field_id: u32,
@@ -14504,7 +14558,7 @@ index 4d5467799..8e8b99e22 100644
      ) -> Result<(), HwpError> {
          let section = target.section;
          let para = target.para;
-@@ -499,12 +518,6 @@ impl DocumentCore {
+@@ -499,12 +534,6 @@ impl DocumentCore {
          self.mark_section_dirty(section);
          self.paginate_if_needed();
          self.invalidate_page_tree_cache();
@@ -14517,7 +14571,7 @@ index 4d5467799..8e8b99e22 100644
          Ok(())
      }
  }
-@@ -526,7 +539,7 @@ fn find_link(p: &Paragraph, id: u32) -> Result<(usize, usize), HwpError> {
+@@ -526,7 +555,7 @@ fn find_link(p: &Paragraph, id: u32) -> Result<(usize, usize), HwpError> {
          .ok_or_else(|| invalid("하이퍼링크 필드를 찾을 수 없습니다"))
  }
  
@@ -14526,7 +14580,7 @@ index 4d5467799..8e8b99e22 100644
      p.char_offsets
          .get(offset)
          .copied()
-@@ -535,7 +548,7 @@ fn raw_boundary(p: &Paragraph, offset: usize) -> u32 {
+@@ -535,7 +564,7 @@ fn raw_boundary(p: &Paragraph, offset: usize) -> u32 {
  
  /// 8-unit 마커를 넣거나 빼며 모든 raw UTF-16 참조 축을 함께 옮긴다.
  /// 첫 글자 서식의 0 anchor는 그대로 둔다. 표시 문자 인덱스는 변하지 않는다.
@@ -14549,16 +14603,18 @@ index c7f2d2c5f..e3efa8b55 100644
  pub mod text_security;
 diff --git a/src/document_core/memo.rs b/src/document_core/memo.rs
 new file mode 100644
-index 000000000..029c92944
+index 000000000..3775ae18f
 --- /dev/null
 +++ b/src/document_core/memo.rs
-@@ -0,0 +1,471 @@
+@@ -0,0 +1,597 @@
 +//! 한컴 메모(주석) 조회·넣기·고치기·지우기.
 +//!
 +//! 메모는 본문 범위를 감싸는 MEMO 필드와 그 필드가 소유한 메모 본문 문단이다. HWPX 는
 +//! `type="MEMO"` 필드로, HWP5 는 `%unk` + `MEMO/…` command 필드로 읽힌다. 문서 안 메모의
 +//! 주소는 메모 번호(`Field::memo_number`)다. 범위 계약은 하이퍼링크 API(#6963)와 같다:
-+//! offset 은 Unicode scalar 인덱스, 범위는 [start, end), 개체가 있는 문단·다단락 필드는 제외.
++//! offset 은 Unicode scalar 인덱스, 범위는 [start, end), 다단락 필드는 제외. 링크와 달리
++//! 표·그림·각주 같은 개체가 있는 문단도 받는다. 개체 칸은 8유닛 슬롯이라 마커 자리를 따로
++//! 계산하고, 고친 문단은 HWP5 로 써서 다시 읽은 결과가 같을 때만 반영한다.
 +
 +use super::hyperlink::{raw_boundary, shift_axis, HyperlinkTarget};
 +use super::DocumentCore;
@@ -14614,7 +14670,7 @@ index 000000000..029c92944
 +        if !created_ms.is_finite() || created_ms < 0.0 {
 +            return Err(invalid("메모 시각이 올바르지 않습니다"));
 +        }
-+        self.validate_hyperlink_paragraph(target)?;
++        self.validate_field_paragraph(target, true)?;
 +        let mut candidate = self.hyperlink_paragraph(target)?.clone();
 +        let len = candidate.text.chars().count();
 +        if start >= end || end > len {
@@ -14660,6 +14716,17 @@ index 000000000..029c92944
 +            .collect();
 +
 +        let positions = candidate.control_text_positions();
++        // 자동 번호 자리 글자에 마커가 맞닿으면 두 저장기와 위치 계산이 번호를 문단 끝으로 보낸다.
++        if [start.checked_sub(1), Some(start), Some(end - 1), Some(end)]
++            .into_iter()
++            .flatten()
++            .any(|k| k < len && is_number_placeholder(&candidate, k))
++        {
++            return Err(invalid(
++                "자동 번호와 맞닿은 범위에는 아직 메모를 달 수 없습니다",
++            ));
++        }
++        // 시작 마커는 글자 앞 개체 칸들 뒤에 놓는다. 그 자리 개체는 메모 밖에 남는다.
 +        let insert_idx = candidate
 +            .controls
 +            .iter()
@@ -14673,7 +14740,15 @@ index 000000000..029c92944
 +                    > start
 +            })
 +            .unwrap_or(candidate.controls.len());
-+        let end_raw = raw_boundary(&candidate, end);
++        // 메모가 감싸는 개체 칸 수. 다시 읽은 값과 같아야 저장기가 끝 마커를 제자리에 둔다.
++        let inner_slot_count = candidate
++            .controls
++            .iter()
++            .zip(&positions)
++            .skip(insert_idx)
++            .filter(|(c, &pos)| pos < end && c.occupies_ctrl_char_slot())
++            .count();
++        let end_raw = field_end_slot(&candidate, end);
 +        let start_raw = raw_boundary(&candidate, start);
 +        shift_axis(&mut candidate, end_raw, 8)?;
 +        shift_axis(&mut candidate, start_raw, 8)?;
@@ -14704,11 +14779,15 @@ index 000000000..029c92944
 +            start_char_idx: start,
 +            end_char_idx: end,
 +            control_idx: insert_idx,
++            inner_slot_count,
 +            ..Default::default()
 +        });
 +        candidate
 +            .field_ranges
 +            .sort_by_key(|r| (r.start_char_idx, r.control_idx));
++        if !crate::serializer::body_text::para_text_round_trips(&candidate) {
++            return Err(invalid("이 위치에는 메모를 달 수 없습니다"));
++        }
 +        self.commit_field_paragraph(target, candidate)?;
 +        Ok(number)
 +    }
@@ -14755,7 +14834,7 @@ index 000000000..029c92944
 +        let (Some(start), Some(end)) = (memo.start, memo.end) else {
 +            return self.delete_spanning_memo(&memo);
 +        };
-+        self.validate_hyperlink_paragraph(&memo.target)?;
++        self.validate_field_paragraph(&memo.target, true)?;
 +        let mut candidate = self.hyperlink_paragraph(&memo.target)?.clone();
 +        let range_idx = candidate
 +            .field_ranges
@@ -14771,13 +14850,24 @@ index 000000000..029c92944
 +                "빈 범위이거나 다른 필드와 맞닿은 메모는 아직 지울 수 없습니다",
 +            ));
 +        }
-+        let end_raw = raw_boundary(&candidate, end);
-+        let start_raw = raw_boundary(&candidate, start);
-+        if start_raw < 8 || end_raw.saturating_sub(start_raw) < 8 {
++        let inner_slot_count = candidate.field_ranges[range_idx].inner_slot_count;
++        let positions = candidate.control_text_positions();
++        // 문단 끝에서 닫는 메모가 뒤 개체까지 감쌌으면 끝 마커는 그 칸들 뒤에 있다.
++        let trailing_inner = if end == candidate.text.chars().count() {
++            (memo.control_idx + 1..=memo.control_idx + inner_slot_count)
++                .filter(|&idx| positions.get(idx).is_some_and(|&pos| pos >= end))
++                .count() as u32
++        } else {
++            0
++        };
++        let end_slot = field_end_slot(&candidate, end) + 8 * trailing_inner;
++        let Some(begin_slot) = begin_slot(&candidate, &positions, memo.control_idx, start)
++            .filter(|&b| b + 8 <= end_slot)
++        else {
 +            return Err(invalid("필드 마커 좌표가 올바르지 않습니다"));
-+        }
-+        shift_axis(&mut candidate, end_raw, -8)?;
-+        shift_axis(&mut candidate, start_raw, -8)?;
++        };
++        shift_axis(&mut candidate, end_slot + 8, -8)?;
++        shift_axis(&mut candidate, begin_slot + 8, -8)?;
 +        candidate.field_ranges.remove(range_idx);
 +        candidate.controls.remove(memo.control_idx);
 +        if memo.control_idx < candidate.ctrl_data_records.len() {
@@ -14787,6 +14877,9 @@ index 000000000..029c92944
 +            if range.control_idx > memo.control_idx {
 +                range.control_idx -= 1;
 +            }
++        }
++        if !crate::serializer::body_text::para_text_round_trips(&candidate) {
++            return Err(invalid("이 메모는 아직 지울 수 없습니다"));
 +        }
 +        self.commit_field_paragraph(&memo.target, candidate)
 +    }
@@ -14815,16 +14908,19 @@ index 000000000..029c92944
 +            .iter()
 +            .position(|o| o.char_idx == end_char && memo_end_matches(o, memo))
 +            .ok_or_else(|| invalid("메모 종료 마커를 찾을 수 없습니다"))?;
-+        let end_raw = raw_boundary(&last, end_char);
-+        shift_axis(&mut last, end_raw, -8)?;
++        let end_slot = orphan_end_slot(&last, ofe_idx);
++        shift_axis(&mut last, end_slot + 8, -8)?;
 +        last.orphan_field_ends.remove(ofe_idx);
 +
-+        let begin = first.control_text_positions()[memo.control_idx];
-+        let begin_raw = raw_boundary(&first, begin);
-+        if begin_raw < 8 {
-+            return Err(invalid("필드 마커 좌표가 올바르지 않습니다"));
-+        }
-+        shift_axis(&mut first, begin_raw, -8)?;
++        let positions = first.control_text_positions();
++        let begin_slot = begin_slot(
++            &first,
++            &positions,
++            memo.control_idx,
++            positions[memo.control_idx],
++        )
++        .ok_or_else(|| invalid("필드 마커 좌표가 올바르지 않습니다"))?;
++        shift_axis(&mut first, begin_slot + 8, -8)?;
 +        first.controls.remove(memo.control_idx);
 +        if memo.control_idx < first.ctrl_data_records.len() {
 +            first.ctrl_data_records.remove(memo.control_idx);
@@ -14833,6 +14929,12 @@ index 000000000..029c92944
 +            if range.control_idx > memo.control_idx {
 +                range.control_idx -= 1;
 +            }
++        }
++        if ![&first, &last]
++            .iter()
++            .all(|p| crate::serializer::body_text::para_text_round_trips(p))
++        {
++            return Err(invalid("이 메모는 아직 지울 수 없습니다"));
 +        }
 +        let mut end_target = memo.target.clone();
 +        match end_target.cell_path.last_mut() {
@@ -14998,6 +15100,84 @@ index 000000000..029c92944
 +    }
 +}
 +
++/// 글자 `k` 가 저장 본문에서 차지하는 UTF-16 폭. 글자 사이에는 8유닛 칸(개체, 필드 마커)만
++/// 끼므로 다음 글자까지 거리의 8 나머지가 폭이다. 나머지 0 은 탭이나 자동 번호 자리 글자(8)다.
++fn raw_char_width(p: &Paragraph, k: usize) -> u32 {
++    let next = p
++        .char_offsets
++        .get(k + 1)
++        .copied()
++        .unwrap_or(p.char_count.saturating_sub(1));
++    match next.saturating_sub(p.char_offsets[k]) % 8 {
++        0 => 8,
++        width => width,
++    }
++}
++
++/// 글자 `end` 앞에서 닫는 필드 끝 마커의 칸 시작: 앞 글자 바로 뒤. 두 저장기 모두 그 자리의
++/// 개체 칸보다 필드 끝을 먼저 쓰므로 `char_offsets[end]` 와 다를 수 있다. `end` 는 1 이상.
++fn field_end_slot(p: &Paragraph, end: usize) -> u32 {
++    p.char_offsets[end - 1] + raw_char_width(p, end - 1)
++}
++
++/// 글자 `k` 가 자동 번호의 자리 글자인가. 그 글자의 칸이 곧 번호 개체다. 진짜 공백은 폭이
++/// 1 이라 8유닛 공백은 자리 글자뿐이다.
++fn is_number_placeholder(p: &Paragraph, k: usize) -> bool {
++    p.text.chars().nth(k) == Some(' ')
++        && raw_char_width(p, k) == 8
++        && p.controls
++            .iter()
++            .any(|c| matches!(c, Control::AutoNumber(_)))
++}
++
++/// 글자 `start` 앞 메모 시작 마커의 칸 시작. 같은 자리에서 마커 뒤에 오는 개체 칸은
++/// (메모가 감싼 개체) 시작 글자와 마커 사이에 있다.
++fn begin_slot(p: &Paragraph, positions: &[usize], memo_idx: usize, start: usize) -> Option<u32> {
++    let len = p.text.chars().count();
++    let anchor = if start < len {
++        p.char_offsets[start]
++    } else {
++        p.char_count.checked_sub(1)?
++    };
++    let placeholder = start < len && is_number_placeholder(p, start);
++    let mut after = p
++        .controls
++        .iter()
++        .zip(positions)
++        .skip(memo_idx + 1)
++        .filter(|(c, &pos)| {
++            pos == start
++                && c.occupies_ctrl_char_slot()
++                && !(placeholder && matches!(c, Control::AutoNumber(_)))
++        })
++        .count();
++    if start == len {
++        // 문단 끝 칸들 사이에 끼는 다른 필드의 끝 마커.
++        after += p
++            .field_ranges
++            .iter()
++            .filter(|r| {
++                r.control_idx != memo_idx
++                    && r.end_char_idx == len
++                    && r.control_idx + r.inner_slot_count >= memo_idx
++            })
++            .count();
++    }
++    anchor.checked_sub(8 * (after as u32 + 1))
++}
++
++/// 앞 문단에서 열린 필드의 끝 마커 칸 시작. 저장기는 그 글자 자리의 무엇보다 먼저 쓴다.
++fn orphan_end_slot(p: &Paragraph, ofe_idx: usize) -> u32 {
++    let len = p.text.chars().count();
++    let at = p.orphan_field_ends[ofe_idx].char_idx.min(len);
++    let gap_start = if at == 0 { 0 } else { field_end_slot(p, at) };
++    let before = p.orphan_field_ends[..ofe_idx]
++        .iter()
++        .filter(|o| o.char_idx.min(len) == at && (o.begin_ctrl_id != 0 || o.memo_index != 0))
++        .count() as u32;
++    gap_start + 8 * before
++}
++
 +fn memo_end_matches(end: &crate::model::paragraph::OrphanFieldEnd, memo: &MemoInfo) -> bool {
 +    (memo.field_id != 0 && end.begin_id_ref == memo.field_id)
 +        || (end.memo_index != 0 && end.memo_index == memo.number)
@@ -15058,9 +15238,24 @@ index 67000c054..790551f4b 100644
      pub fn is_editable_in_form(&self) -> bool {
          self.properties & 1 != 0
 diff --git a/src/parser/body_text.rs b/src/parser/body_text.rs
-index 036e8bf54..4d92371ad 100644
+index 036e8bf54..f22e61a4c 100644
 --- a/src/parser/body_text.rs
 +++ b/src/parser/body_text.rs
+@@ -34,10 +34,10 @@ use crate::model::paragraph::{
+ };
+ 
+ /// `PARA_TEXT` 한 레코드에서 뽑아낸 문단 본문 축 정보.
+-struct ParaTextParts {
+-    text: String,
+-    char_offsets: Vec<u32>,
+-    field_ranges: Vec<FieldRange>,
++pub(crate) struct ParaTextParts {
++    pub(crate) text: String,
++    pub(crate) char_offsets: Vec<u32>,
++    pub(crate) field_ranges: Vec<FieldRange>,
+     tab_extended: Vec<[u16; 7]>,
+     title_marks: Vec<TitleMark>,
+     orphan_field_ends: Vec<OrphanFieldEnd>,
 @@ -76,8 +76,29 @@ impl std::error::Error for BodyTextError {}
  ///
  /// data: 압축 해제된(배포용은 복호화+해제된) 레코드 바이트 스트림
@@ -15291,6 +15486,15 @@ index 036e8bf54..4d92371ad 100644
      for section in sections.iter_mut() {
          link_orphan_field_ends_with(&mut section.paragraphs, &mut open_fields);
      }
+@@ -424,7 +580,7 @@ fn parse_para_header(data: &[u8]) -> Paragraph {
+ /// HWP의 텍스트는 UTF-16LE로 저장되며, 0x0000~0x001F 범위는 컨트롤 문자.
+ /// - 확장 컨트롤 문자: 8 code unit (16바이트) 차지
+ /// - 인라인 컨트롤 문자: 1 code unit (2바이트) 차지
+-fn parse_para_text(data: &[u8]) -> ParaTextParts {
++pub(crate) fn parse_para_text(data: &[u8]) -> ParaTextParts {
+     // 벌크빌드(#4860): 출력 버퍼를 입력 길이 기준으로 미리 예약하고, 평문 런(plain run)은
+     // code unit 단위 push 대신 일괄 extend 로 채운다. SIMD 아님 — 순수 메모리/할당
+     // 최적화이며 스칼라 구현과 byte-identical.
 @@ -544,6 +700,10 @@ fn parse_para_text(data: &[u8]) -> ParaTextParts {
                      //
                      // HWPX 파서는 이미 같은 것을 `orphan_field_ends` 로 보존한다
@@ -15389,7 +15593,7 @@ index e4467db3e..f528582d2 100644
      // BinData 로드 시도
      let bin_data_content = load_bin_data_content_lenient(
 diff --git a/src/serializer/body_text.rs b/src/serializer/body_text.rs
-index 0e94a0864..1f5587e34 100644
+index 0e94a0864..f96f90f39 100644
 --- a/src/serializer/body_text.rs
 +++ b/src/serializer/body_text.rs
 @@ -24,23 +24,42 @@ use crate::parser::tags;
@@ -15496,12 +15700,12 @@ index 0e94a0864..1f5587e34 100644
 +                    for cell in &table.cells {
 +                        collect_memo_lists_in(&cell.paragraphs, memo_lists);
 +                    }
-+                }
+                 }
 +                Control::Shape(shape) => {
 +                    if let Some(text_box) = shape.drawing().and_then(|d| d.text_box.as_ref()) {
 +                        collect_memo_lists_in(&text_box.paragraphs, memo_lists);
 +                    }
-                 }
++                }
 +                _ => {}
              }
          }
@@ -15585,7 +15789,40 @@ index 0e94a0864..1f5587e34 100644
          mask |= 1u32 << 0x0004;
      }
      // TAB (0x0009): text에 탭이 있으면 비트 9 설정
-@@ -813,9 +813,9 @@ fn serialize_para_text(para: &Paragraph) -> ParaTextResult {
+@@ -708,6 +708,32 @@ fn push_guide_residue(
+     });
+ }
+ 
++/// 고친 문단을 HWP5 본문으로 쓰고 다시 읽었을 때 글자 위치와 필드 범위가 그대로인가.
++/// 메모 마커를 개체가 있는 문단에 넣고 뺄 때 저장 결과를 미리 확인하는 데 쓴다.
++pub(crate) fn para_text_round_trips(para: &Paragraph) -> bool {
++    let written = serialize_para_text(para);
++    let parts = crate::parser::body_text::parse_para_text(&written.bytes);
++    let ranges = |ranges: &[crate::model::paragraph::FieldRange]| {
++        let mut keys: Vec<_> = ranges
++            .iter()
++            .map(|r| {
++                (
++                    r.start_char_idx,
++                    r.end_char_idx,
++                    r.control_idx,
++                    r.inner_slot_count,
++                )
++            })
++            .collect();
++        keys.sort_unstable();
++        keys
++    };
++    written.bytes.len() / 2 == para.char_count as usize
++        && parts.text == para.text
++        && parts.char_offsets == para.char_offsets
++        && ranges(&parts.field_ranges) == ranges(&para.field_ranges)
++}
++
+ fn serialize_para_text(para: &Paragraph) -> ParaTextResult {
+     let mut code_units: Vec<u16> = Vec::new();
+     let text_chars: Vec<char> = para.text.chars().collect();
+@@ -813,9 +839,9 @@ fn serialize_para_text(para: &Paragraph) -> ParaTextResult {
          for ofe in para
              .orphan_field_ends
              .iter()
@@ -15597,7 +15834,7 @@ index 0e94a0864..1f5587e34 100644
              prev_end += 8;
          }
  
-@@ -1066,9 +1066,9 @@ fn serialize_para_text(para: &Paragraph) -> ParaTextResult {
+@@ -1066,9 +1092,9 @@ fn serialize_para_text(para: &Paragraph) -> ParaTextResult {
      for ofe in para
          .orphan_field_ends
          .iter()
@@ -15609,7 +15846,30 @@ index 0e94a0864..1f5587e34 100644
          prev_end += 8;
      }
  
-@@ -1282,6 +1282,21 @@ fn parse_memo_index_from_command(command: &str) -> Option<u32> {
+@@ -1090,6 +1116,22 @@ fn serialize_para_text(para: &Paragraph) -> ParaTextResult {
+         prev_end += 8;
+     }
+ 
++    // 본문 중간에서 열려 문단 끝에서 닫히는 필드는 감싼 칸을 모두 냈으면 남은 개체보다 먼저
++    // 닫는다. 맨 뒤로 미루면 뒤따르는 각주·표가 필드 안으로 들어가 다시 열 때 범위가 바뀐다.
++    // 안쪽 필드부터 닫도록 키가 큰 것부터 낸다. 안내문 잔재는 아래 orphan 경로처럼 내지 않는다.
++    let mut closed_before_trailing: Vec<usize> = trailing_end_after_ctrl
++        .keys()
++        .copied()
++        .filter(|&key| key < ctrl_idx)
++        .collect();
++    closed_before_trailing.sort_unstable_by(|a, b| b.cmp(a));
++    for key in closed_before_trailing {
++        for marker in trailing_end_after_ctrl.remove(&key).unwrap_or_default() {
++            push_field_end_ctrl(&mut code_units, marker);
++            prev_end += 8;
++        }
++    }
++
+     while ctrl_idx < para.controls.len() {
+         if emits_ctrl_header(&para.controls[ctrl_idx]) {
+             let (ctrl_code, ctrl_id) = control_char_code_and_id(&para.controls[ctrl_idx]);
+@@ -1282,6 +1324,21 @@ fn parse_memo_index_from_command(command: &str) -> Option<u32> {
      command.split('/').nth(2)?.parse().ok()
  }
  
@@ -15631,7 +15891,7 @@ index 0e94a0864..1f5587e34 100644
  fn push_field_end_ctrl(code_units: &mut Vec<u16>, marker: FieldEndMarker) {
      if marker.ctrl_id == tags::FIELD_MEMO {
          // Hancom writes MEMO field end with a distinct 8-code-unit marker:
-@@ -1479,6 +1494,9 @@ fn control_char_code_and_id(ctrl: &Control) -> (u16, u32) {
+@@ -1479,6 +1536,9 @@ fn control_char_code_and_id(ctrl: &Control) -> (u16, u32) {
          // 통째로 버린다(0자·1쪽). `CTRL_CHAR_OVERLAP` 상수는 이름과 달리 'tdut'(덧말)이다.
          Control::Ruby(_) => (0x0017, tags::CTRL_CHAR_OVERLAP),
          Control::CharOverlap(_) => (0x0017, tags::CTRL_TCPS),
@@ -15641,7 +15901,7 @@ index 0e94a0864..1f5587e34 100644
          Control::Field(f) => (0x0003, f.ctrl_id),
          Control::Equation(_) => (0x000B, tags::CTRL_EQUATION),
          Control::Form(_) => (0x000B, tags::CTRL_FORM),
-@@ -2189,39 +2207,6 @@ mod tests {
+@@ -2189,39 +2249,6 @@ mod tests {
              1,
              "조판 전용 보강 줄은 레코드에서 제외된다"
          );

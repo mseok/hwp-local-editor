@@ -271,3 +271,95 @@ test('memos in two sections keep their bodies in HWP and HWPX', () => {
     try {r.setMemoText(2, '둘째 구역 고친 메모'); const again = reopen(r.exportHwp()); try {assert.deepEqual(memos(again).map(m => m.text), ['첫 구역 메모', '둘째 구역 고친 메모']);} finally {again.free();}} finally {r.free();}
   } finally {base.free(); two?.free();}
 });
+
+// Objects (footnotes, equations, tables) sit in the paragraph text as 8-unit slots between letters. A memo next to an
+// object must close before it and open after it, so the object stays outside, and a memo over an object keeps it inside.
+function objectParagraph() {
+  const d = new HwpDocument(blank);
+  d.createBlankDocument();
+  d.insertText(0, 0, 0, '첫 문단'); d.splitParagraph(0, 0, 4);
+  d.insertText(0, 1, 0, '각주 앞 글자 수식 뒤 표 옆 끝 문장');
+  d.insertFootnote(0, 1, 4);
+  d.insertEquation(0, 1, 10, 'x+y', 1000, 0);
+  d.createTableEx(JSON.stringify({sectionIdx: 0, paraIdx: 1, charOffset: 14, rowCount: 1, colCount: 1, treatAsChar: true}));
+  d.insertFootnote(0, 1, d.getParagraphLength(0, 1));
+  return d;
+}
+
+// Body paragraph text of a saved HWP as tokens: letters, [id] for object and field-begin slots, [/] for field ends.
+function bodyTokens(bytes) {
+  return hwpRecords(Buffer.from(bytes)).filter(r => r.tag === 67 && r.level === 1).map(r => {
+    let out = '';
+    for (let k = 0; k + 1 < r.body.length; k += 2) {
+      const c = r.body.readUInt16LE(k);
+      if (c >= 32) {out += String.fromCharCode(c); continue;}
+      if (c === 13) continue;
+      out += c === 4 ? '[/]' : `[${Buffer.from(r.body.subarray(k + 2, k + 6)).reverse().toString('latin1').trim()}]`;
+      k += 14;
+    }
+    return out;
+  });
+}
+
+const paragraphRecords = bytes => hwpRecords(Buffer.from(bytes)).filter(r => r.tag === 67 || r.tag === 68).map(r => r.body.toString('hex'));
+
+test('memos next to and over footnotes, equations and inline tables keep the objects in place in HWP and HWPX', () => {
+  const plain = objectParagraph(), d = objectParagraph();
+  try {
+    const positions = plain.getControlTextPositions(0, 1);
+    assert.equal(positions, '[4,10,14,21]');
+    assert.equal(insert(d, body(1), 2, 4, '각주 바로 앞'), 1);
+    assert.equal(insert(d, body(1), 10, 12, '수식 바로 뒤'), 2);
+    assert.equal(insert(d, body(1), 13, 16, '표를 감쌈'), 3);
+    assert.equal(insert(d, body(1), 17, 21, '문단 끝, 뒤에 각주'), 4);
+    assert.equal(paragraphText(d, 1), paragraphText(plain, 1));
+    assert.deepEqual(bodyTokens(d.exportHwp())[1], '각주[%%me] 앞[/][fn] 글자 수식[eqed][%%me] 뒤[/] [%%me]표[tbl] 옆[/] [%%me]끝 문장[/][fn]');
+    const expected = memos(d);
+    assert.deepEqual(expected.map(m => m.anchorText), [' 앞', ' 뒤', '표 옆', '끝 문장']);
+    for (const [name, bytes] of [['HWP', d.exportHwp()], ['HWPX', d.exportHwpx()]]) {
+      const r = reopen(bytes);
+      try {
+        assert.deepEqual(memos(r), expected, name);
+        assert.equal(paragraphText(r, 1), paragraphText(plain, 1), name);
+        assert.equal(r.getControlTextPositions(0, 1), '[2,4,10,10,13,14,17,21]', name);
+        for (const m of expected) r.deleteMemo(m.number);
+        assert.equal(r.getControlTextPositions(0, 1), positions, name);
+        // With every memo gone, the paragraph text and character shapes are written exactly as for the untouched document.
+        assert.deepEqual(paragraphRecords(r.exportHwp()), paragraphRecords(plain.exportHwp()), name);
+      } finally {r.free();}
+    }
+  } finally {plain.free(); d.free();}
+});
+
+test('memos that touch an auto number are refused; a memo over one keeps it in place', () => {
+  const base = new HwpDocument(blank);
+  let d;
+  try {
+    base.createBlankDocument();
+    base.insertText(0, 0, 0, '첫 문단'); base.splitParagraph(0, 0, 4);
+    base.insertText(0, 1, 0, '그림 번호 뒤 글자');
+    const entries = unzip(Buffer.from(base.exportHwpx()));
+    const xml = entries.get('Contents/section0.xml').toString('utf8');
+    const autoNum = '<hp:ctrl><hp:autoNum num="1" numType="PICTURE"><hp:autoNumFormat type="DIGIT" userChar="" prefixChar="" suffixChar="" supscript="0"/></hp:autoNum></hp:ctrl>';
+    entries.set('Contents/section0.xml', Buffer.from(xml.replace('<hp:t>그림 번호 뒤 글자</hp:t>', `<hp:t>그림 </hp:t>${autoNum}<hp:t>번호 뒤 글자</hp:t>`)));
+    d = new HwpDocument(zip(entries));
+    // The auto number is the placeholder letter at index 3.
+    assert.equal(paragraphText(d, 1), '그림  번호 뒤 글자');
+    assert.equal(d.getControlTextPositions(0, 1), '[3]');
+    const before = Buffer.from(d.exportHwpx());
+    for (const [start, end] of [[3, 5], [4, 6], [0, 3], [0, 4]]) assert.throws(() => insert(d, body(1), start, end, 'x'), /자동 번호와 맞닿은/);
+    assert.deepEqual(Buffer.from(d.exportHwpx()), before);
+    assert.equal(insert(d, body(1), 1, 6, '번호를 감쌈'), 1);
+    for (const bytes of [d.exportHwp(), d.exportHwpx()]) {
+      const r = reopen(bytes);
+      try {
+        assert.equal(paragraphText(r, 1), '그림  번호 뒤 글자');
+        assert.equal(r.getControlTextPositions(0, 1), '[1,3]');
+        assert.deepEqual(memos(r).map(m => [m.start, m.end]), [[1, 6]]);
+        r.deleteMemo(1);
+        const again = reopen(r.exportHwp());
+        try {assert.equal(paragraphText(again, 1), '그림  번호 뒤 글자'); assert.equal(again.getControlTextPositions(0, 1), '[3]');} finally {again.free();}
+      } finally {r.free();}
+    }
+  } finally {base.free(); d?.free();}
+});
