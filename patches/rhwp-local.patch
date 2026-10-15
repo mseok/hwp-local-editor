@@ -13256,7 +13256,7 @@ index 930af00d7..5c29d80ac 100644
                      .cells
                      .get(last.1)
 diff --git a/src/document_core/queries/hwpctrl_sets.rs b/src/document_core/queries/hwpctrl_sets.rs
-index ce65f5725..8a7f48be7 100644
+index ce65f5725..77dbc1ce8 100644
 --- a/src/document_core/queries/hwpctrl_sets.rs
 +++ b/src/document_core/queries/hwpctrl_sets.rs
 @@ -756,6 +756,41 @@ impl DocumentCore {
@@ -13301,6 +13301,24 @@ index ce65f5725..8a7f48be7 100644
      /// 컨트롤 하나를 지운다 — 웹한글컨트롤 `DeleteCtrl`.
      ///
      /// 자리는 컨트롤 사슬이 준 `(list, para, controlIndex)` 다. 본문만 다룬다 — 셀·글상자 안의
+@@ -1981,8 +2016,15 @@ impl DocumentCore {
+                     ..Default::default()
+                 }),
+             );
+-            // 글자 한 칸은 `insert_text_at` 이 이미 셌다 — 컨트롤 몫 일곱만 더한다(합 8칸).
+-            para.char_count += (EXTENDED_CTRL_UNITS - 1) as u32;
++            // 글자 한 칸은 `insert_text_at` 이 이미 셌다 — 컨트롤 몫 일곱을 자리표 뒤에 더해 8칸을
++            // 채운다. 뒤 글자 위치까지 밀어야 자리표로 읽힌다: 글자 수만 늘리면 저장기가 공백을
++            // 글자로 쓰고 번호를 문단 끝에 붙여, 다시 열 때마다 공백이 하나씩 늘었다.
++            let after_placeholder = para.char_offsets[char_idx] + 1;
++            crate::document_core::hyperlink::shift_axis(
++                para,
++                after_placeholder,
++                (EXTENDED_CTRL_UNITS - 1) as i32,
++            )?;
+             section.raw_stream = None;
+         }
+ 
 diff --git a/npm/hwpctrl-ocx/src/index.mjs b/npm/hwpctrl-ocx/src/index.mjs
 index 77fa2c31f..c4623e935 100644
 --- a/npm/hwpctrl-ocx/src/index.mjs
