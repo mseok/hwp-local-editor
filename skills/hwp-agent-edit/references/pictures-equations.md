@@ -1,0 +1,7 @@
+# Pictures and equations
+
+Part of `hwp-agent-edit`; read after the per-document steps in `SKILL.md`.
+
+To resize a picture, select it on the rendered page and click **개체 속성**. Enter **개체 너비(mm)** and **개체 높이(mm)**, then click **설정(D)**. If the requested dimensions use a different aspect ratio, clear **비율 유지** before entering both values. Confirm the selected object visually; Find does not select pictures. Body-picture resizing has been checked in both formats, including retained image bytes and unrelated properties. This does not establish image replacement, cropping or every nested-object route.
+
+To edit a body equation, double-click its rendered object, fill **수식 스크립트** and click **확인**. The editor also exposes **수식 글자 크기(pt)** and **수식 글자색**. For its separate property dialog, select the equation, click **개체 속성 → 수식** and use **수식 속성 글자 크기(pt)** and **수식 속성 글자색**, then click **설정(D)**. The property script field is read-only; use **편집(E)** or the equation editor for content. Both dialogs preserve fractional font sizes; script-only changes retain the original size and color. Body-equation script/size/color edits, undo/redo, journal recovery and saved reopening have been checked in HWP/HWPX. Other body formatting, table, footnote, header and image bytes stay unchanged in these fixtures. This does not establish every equation syntax, nested/note equation edits or native Hancom equation rendering.

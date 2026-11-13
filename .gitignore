@@ -3,6 +3,7 @@
 node_modules/
 local/
 test-results/
+skills/hwp-agent-edit/repository.txt
 *.hwp
 *.hwpx
 *.pdf
