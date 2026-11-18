@@ -1,7 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LocalOperationJournal } from '../overlay/rhwp-studio/src/recovery/local-operation-journal.ts';
-import { LOCAL_JOURNAL_METHODS } from '../overlay/rhwp-studio/src/recovery/local-journal-methods.ts';
+import { readFileSync } from 'node:fs';
+import { registerHooks, stripTypeScriptTypes } from 'node:module';
+registerHooks({
+  load(url, context, nextLoad) {
+    if (!url.endsWith('/local-operation-journal.ts')) return nextLoad(url, context);
+    const expanded = readFileSync(new URL(url), 'utf8').replace(
+      'constructor(private readonly changed: () => void) {}',
+      'private readonly changed: () => void;\n  constructor(changed: () => void) { this.changed = changed; }',
+    );
+    return { format: 'module', shortCircuit: true, source: stripTypeScriptTypes(expanded, { mode: 'strip', sourceUrl: url }) };
+  },
+});
+const { LocalOperationJournal } = await import('../overlay/rhwp-studio/src/recovery/local-operation-journal.ts');
 const fake = (offset = 0) => {
   let text = '', next = offset;
   const snapshots = new Map();

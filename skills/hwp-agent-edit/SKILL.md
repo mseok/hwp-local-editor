@@ -21,6 +21,10 @@ In Codex desktop, use the built-in **Browser** (`@Browser`) by default. Load its
 
 Claude Code needs browser tools in its session. After `npm run setup`, the user-scope MCP server `hwp-browser` provides a headless, loopback-only browser for ports 8766-8775, so start the task server on one of those ports and use its `browser_*` tools. Its ordinary Chrome integration uses visible windows; for background work without that server, use the session-local headless configuration described in `docs/claude-browser.md` in this checkout. `scripts/claude-browser-config.mjs` binds the setup to the task origin, keeps a separate browser profile and preserves existing global registrations. Do not silently attach to the personal browser, enable unrestricted file access or replace an existing configuration. If a browser response only links to a snapshot file, call `browser_snapshot` for the current page instead of assuming the link contains its text. Actual Claude body/table edits and saved reopening have been verified in both formats; this does not extend the object/layout coverage below.
 
+When the session offers `tether_browser` tools (a conversation run through a Tether gateway, which has no built-in Browser), use them: they drive a headless browser that the gateway runs on this host, so no window opens and the foreground is untouched. It reaches the task server on any free loopback port. Its `browser_*` tools behave like the Claude Code server's: if a response only links to a snapshot file, call `browser_snapshot` for the current page. Using it is the intended background browser there, not a switch to an external one.
+
+In Antigravity (`agy`), use the plugin MCP server `migrated-settings_hwp-browser` when registered on this host: it runs the same headless, isolated, loopback-only browser for `http://127.0.0.1:8766`-`8775` without touching foreground windows. Start `scripts/open.mjs` on one of ports `8766`-`8775` and call its `browser_*` tools, calling `browser_snapshot` whenever a tool response only links to a snapshot file. Using it is the intended background browser there; do not switch to a visible browser window.
+
 For each document:
 
 1. Open its editor link in a separate tab. If a result already exists, continue from **저장 결과 다시 열기**. Verify the filename and successful load.
@@ -58,3 +62,7 @@ For proposal or report review copies (filling a supplied template while preservi
 ## Recording mode (2026-10-17 audit)
 
 Before a recorded demo, take one screenshot to confirm the visible tab and document, then pace actions so each visible step completes before the next; never start actions the recording cannot see.
+
+## User decisions
+
+The dated decisions behind these rules, in the user's own words, are in [references/user-decisions.md](references/user-decisions.md). Read it before editing this skill; record a new decision there and state the resulting rule in plain words in this file.
